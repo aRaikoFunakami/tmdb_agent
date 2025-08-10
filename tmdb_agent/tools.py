@@ -6,8 +6,16 @@ import os
 from datetime import datetime
 from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
+from sudachipy import tokenizer, dictionary
 
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+
+# 形態素解析して SearcH API に適した形式に変換するための関数
+TOKENIZER = dictionary.Dictionary().create()
+MODE = tokenizer.Tokenizer.SplitMode.B
+
+def tokenize_text(text):
+    return [m.surface() for m in TOKENIZER.tokenize(text, MODE)]
 
 # Pydantic モデル定義（厳格な型チェックとJSONスキーマ生成）
 class MovieSearchInput(BaseModel):
@@ -63,15 +71,18 @@ class PersonSearchInput(BaseModel):
         description=(
             "検索する人物の名前のみを指定する。"
             "説明文・引用符・装飾・改行は不可。"
-            "関係ない語句（例: 80年代, 車, 教えて等）は含めない。"
+            "関係ない語句（例: 80年代, 映画, 教えて等）は含めない。"
             "複数語は半角スペース区切り、中黒や句読点は使わない。"
+            "※一部の人物名ではミドルネームを含めると検索に失敗する場合があるため、"
+            "可能な限り短く、代表的な表記のみを使用する（例: 「マイケル フォックス」は可、"
+            "「マイケル ジェイ フォックス」は不可）。"
         ),
         min_length=1,
         max_length=64,
         examples=[
-            "バック トゥ ザ フューチャー",
-            "Back to the Future",
-            "ターミネーター 2",
+            "マイケル フォックス",
+            "Tom Hanks",
+            "山田 太郎",
         ],
     )
     language_code: Optional[str] = Field(
@@ -82,7 +93,27 @@ class PersonSearchInput(BaseModel):
 
 class MultiSearchInput(BaseModel):
     """マルチ検索の入力パラメータ"""
-    query: str = Field(description="検索するキーワード（映画・TV番組・人物を横断検索）", min_length=1)
+    query: str = Field(
+        description=(
+            "検索するキーワード（映画・TV番組・人物を横断検索）のうち1つを指定する。"
+            "説明文・引用符・装飾・改行は不可。"
+            "関係ない語句（例: 80年代, 映画, 教えて等）は含めない。"
+            "複数語は半角スペース区切り、中黒や句読点は使わない。"
+            "※一部の人物名ではミドルネームを含めると検索に失敗する場合があるため、"
+            "可能な限り短く、代表的な表記のみを使用する（例: 「マイケル フォックス」は可、"
+            "「マイケル ジェイ フォックス」は不可）。"
+        ),
+        min_length=1,
+        max_length=64,
+        examples=[
+            "バック トゥ ザ フューチャー",
+            "Back to the Future",
+            "ターミネーター 2",
+            "マイケル フォックス",
+            "Tom Hanks",
+            "山田 太郎",
+        ],
+    )
     language_code: Optional[str] = Field(
         default=None, 
         description="検索言語コード（例: ja-JP, en-US）。指定しない場合は自動検出。明示的に言語を指定したい場合に使用。",
@@ -277,7 +308,10 @@ def tmdb_movie_search(query: str, language_code: Optional[str] = None) -> str:
     """TMDBで映画を検索します。具体的な映画タイトルやキーワードを使用してください。"""
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
-    
+
+    # 形態素解析して検索クエリを整形
+    query = " ".join(tokenize_text(query))
+
     url = "https://api.themoviedb.org/3/search/movie"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
     
@@ -304,7 +338,7 @@ def tmdb_movie_search(query: str, language_code: Optional[str] = None) -> str:
 
         # 検索に使用した言語コードを結果に含める
         output.append(f"language: {lang_code}")
-        return "\n".join(output)
+        return "\n".join(output) + "\n"
         
     except Exception as e:
         return f"映画検索でエラーが発生しました: {str(e)}"
@@ -315,6 +349,9 @@ def tmdb_person_search(query: str, language_code: Optional[str] = None) -> str:
     """TMDBで人物（俳優、監督など）を検索します。具体的な人名を使用してください。"""
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
+
+    # 形態素解析して検索クエリを整形
+    query = " ".join(tokenize_text(query))
     
     url = "https://api.themoviedb.org/3/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
@@ -355,6 +392,9 @@ def tmdb_tv_search(query: str, language_code: Optional[str] = None) -> str:
     """TMDBでTV番組・ドラマ・アニメを検索します。具体的な番組タイトルを使用してください。"""
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
+
+    # 形態素解析して検索クエリを整形
+    query = " ".join(tokenize_text(query))
     
     url = "https://api.themoviedb.org/3/search/tv"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
@@ -396,6 +436,9 @@ def tmdb_multi_search(query: str, language_code: Optional[str] = None) -> str:
     """TMDBで映画・TV番組・人物を横断検索します。コンテンツの種類が不明な場合に使用してください。"""
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
+
+    # 形態素解析して検索クエリを整形
+    query = " ".join(tokenize_text(query))
     
     url = "https://api.themoviedb.org/3/search/multi"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}

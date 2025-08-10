@@ -150,10 +150,30 @@ class TMDBSearchAgent:
             agent=self.agent,
             tools=self.tools,
             verbose=self.verbose,
-            handle_parsing_errors="❌ 出力フォーマットエラーが発生しました。必ず以下の形式に従ってください：\n\nThought: [思考内容]\nAction: [ツール名]\nAction Input: [入力内容]\nObservation: [結果]\n...\nThought: [最終思考]\nFinal Answer: [最終回答]\n\n「Final Answer:」で必ず終了し、Action InputとFinal Answerを同じ応答に含めてはいけません。",
+            handle_parsing_errors=self._handle_parse_error,
             max_iterations=8,
             max_execution_time=45,
             return_intermediate_steps=True,
+        )
+
+    def _handle_parse_error(self, e: Exception) -> str:
+        """
+        ReAct parsing error fallback (English, concise).
+        Forces the exact schema without any extra prose.
+        """
+        tool_list = ", ".join(TOOL_NAMES)
+        return (
+            "FORMAT ERROR. Output MUST follow exactly:\n"
+            "Thought: ...\n"
+            f"Action: <one of [{tool_list}]>\n"
+            "Action Input: <single input string or JSON; empty string for no-arg tools>\n"
+            "Observation: <tool result>\n"
+            "...\n"
+            "Thought: <final reasoning>\n"
+            "Final Answer: <answer>\n"
+            "Do not write any prose outside these lines. "
+            "Do not include Final Answer in the same turn as Action Input. "
+            "Action Input must be a single query (no 'or', no multiple queries)."
         )
 
     def _create_prompt_template(self) -> PromptTemplate:
@@ -186,56 +206,40 @@ MULTILINGUAL RESPONSE RULES:
 - Always search for and provide information about movies or TV shows regardless of language
 - Never refuse to respond
 
-TRENDING TOOLS USAGE NOTES:
-- For "today", "current", "daily": use time_window="day"
-- For "this week", "recent", "weekly": use time_window="week"
-- Past periods like "last week", "2 weeks ago" are not available due to TMDB API limitations (only current and recent week data provided)
-- Tools without arguments (tmdb_get_trending_*, tmdb_get_popular_people) all provide daily (today's) trends
-
-WEB SEARCH SUPPLEMENT TOOL USAGE:
-- Use web_search_supplement when TMDB doesn't have information
-- Effective for Japanese local works, indie films, latest news
-- Use for production background, related information, detailed explanations
-
-THEME SONG SEARCH TOOL USAGE:
-- Use theme_song_search for movie/anime/drama theme songs
-- Optimal for opening/ending/insert songs/theme songs
-- Can retrieve artist information and soundtrack details
+TITLE-ONLY INPUT RULES (STRICT):
+- For tmdb_movie_search / tmdb_tv_search: provide ONE probable title string only (no keywords, no quotes, no suffix like "movie(s)"/"about"/"1980s").
+- If the user gave a description (not a title), extract the SINGLE most likely title candidate first. If unknown, use tmdb_multi_search with ONE minimal keyword to identify the title, then call the proper tool with the exact title.
+- Never pass generic keywords like "Marvel movies", "car time machine 1980s" to title-search tools.
 
 ACTION INPUT GUIDELINES:
-- Tools requiring arguments: provide appropriate parameters (e.g., time_window="week")
-- Tools without arguments (tmdb_get_*): use empty string (no input)
+- Use a single, specific query string. Do NOT write multiple alternatives or 'or'.
+- Tools requiring arguments must receive the exact parameters (e.g., time_window="week").
+- Tools without arguments (tmdb_get_* and tmdb_popular_people) must receive an empty string.
 
-CRITICAL TOOL SELECTION RULES:
-- For "this week" data:
-  Action: tmdb_trending_people
-  Action Input: week
-- For "today" data:
-  Action: tmdb_get_trending_people
-  Action Input: (no input)
-- For past periods like "last week", "2 weeks ago": explain TMDB API limitations and suggest available "this week" or "today" data
+CREDITS-FIRST DECISION RULES (NO PRE-SEARCH):
+- If the user asks for director/cast/crew/credits of a specific title:
+  - For movies, call tmdb_movie_credits_search directly with the title string.
+  - For TV shows, call tmdb_tv_credits_search directly with the title string.
+  - Do NOT call tmdb_movie_search or tmdb_tv_search beforehand. The credits tools already find the title internally and then fetch credits.
+- If the title is ambiguous or unknown, use tmdb_multi_search once with a single keyword to identify the likely title, then immediately call the appropriate credits tool with that exact title.
+- Only use tmdb_credits_search_by_id if you already have a numeric TMDB ID.
+
+TOOL SELECTION HINTS:
+- For broad or ambiguous topics (e.g., "Marvel movies"), start with tmdb_multi_search, then follow up with focused tmdb_movie_search.
+- For "today/current/daily": use time_window="day"
+- For "this week/recent/weekly": use time_window="week"
+- Past periods like "last week" or "2 weeks ago" are not available; explain the TMDB limitation and suggest available periods.
 
 STRICT OUTPUT FORMAT RULES:
-1. Action line must contain only the tool name (e.g., tmdb_trending_people)
-2. Action Input line must contain only arguments (empty string for no-argument tools)
-3. Must end with "Final Answer:"
-4. Never include Action Input and Final Answer in the same response
-5. Always check Observation after tool execution before writing Final Answer
-6. Never stop response midway
-
-ABSOLUTELY PROHIBITED:
-- Including Action Input and Final Answer in the same response
-- Ending response without "Final Answer:"
-- Stopping response midway
-- Refusal responses like "I'm sorry, I can't assist with that request."
-- Immediately responding with text after receiving tool results (must use Final Answer:)
-
-REQUIRED:
-- Action contains only tool name (e.g., tmdb_trending_people)
-- Parameters go in Action Input
-- Must end with "Final Answer:"
-- Respond naturally in the question's language
-- Always provide the best possible answer with available information"""
+1. Only use the exact ReAct schema lines (Thought/Action/Action Input/Observation/.../Final Answer).
+2. Do NOT write any normal prose before 'Final Answer:'; only schema lines are allowed.
+3. Action line must contain only the tool name (e.g., tmdb_trending_people).
+4. Action Input line must contain only the input (empty string for no-argument tools).
+5. End with 'Final Answer:'.
+6. Never include Action Input and Final Answer in the same response.
+7. Always inspect Observation before writing Final Answer.
+8. Action Input must be a single query (no 'or', no multiple queries).
+"""
 
         # 元のReActプロンプトテンプレートを取得し、TMDB用の指示を追加
         modified_template = base_prompt.template.replace(

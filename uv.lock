@@ -524,6 +524,8 @@ dependencies = [
     { name = "langchain-tavily" },
     { name = "langchainhub" },
     { name = "langdetect" },
+    { name = "sudachidict-core" },
+    { name = "sudachipy" },
 ]
 
 [package.metadata]
@@ -534,6 +536,8 @@ requires-dist = [
     { name = "langchain-tavily", specifier = ">=0.2.11" },
     { name = "langchainhub", specifier = ">=0.1.21" },
     { name = "langdetect", specifier = ">=1.0.9" },
+    { name = "sudachidict-core", specifier = ">=20250515" },
+    { name = "sudachipy", specifier = ">=0.6.10" },
 ]
 
 [[package]]
@@ -937,6 +941,31 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/39/44/3a451d7fa4482a8ffdf364e803ddc2cfcafc1c4635fb366f169ecc2c3b11/sqlalchemy-2.0.42-cp313-cp313-win32.whl", hash = "sha256:45c842c94c9ad546c72225a0c0d1ae8ef3f7c212484be3d429715a062970e87f", size = 2093990, upload-time = "2025-07-29T13:16:13.036Z" },
     { url = "https://files.pythonhosted.org/packages/4b/9e/9bce34f67aea0251c8ac104f7bdb2229d58fb2e86a4ad8807999c4bee34b/sqlalchemy-2.0.42-cp313-cp313-win_amd64.whl", hash = "sha256:eb9905f7f1e49fd57a7ed6269bc567fcbbdac9feadff20ad6bd7707266a91577", size = 2120473, upload-time = "2025-07-29T13:16:14.502Z" },
     { url = "https://files.pythonhosted.org/packages/ee/55/ba2546ab09a6adebc521bf3974440dc1d8c06ed342cceb30ed62a8858835/sqlalchemy-2.0.42-py3-none-any.whl", hash = "sha256:defcdff7e661f0043daa381832af65d616e060ddb54d3fe4476f51df7eaa1835", size = 1922072, upload-time = "2025-07-29T13:09:17.061Z" },
+]
+
+[[package]]
+name = "sudachidict-core"
+version = "20250515"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sudachipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/84/647417933bff5de7d6fd9fd11a2d9005e68868b9ef6dd8c7ff32e7fcfc79/sudachidict_core-20250515.tar.gz", hash = "sha256:63be5499104f5cb5464c819739d9901bd886cb3c4b6ab59ae3f39e97a23f5603", size = 9050, upload-time = "2025-05-19T05:22:21.477Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/df/83d0cf0d94e812519c8b556b6ad0b430d074e163eb917e161f90cce2d716/sudachidict_core-20250515-py3-none-any.whl", hash = "sha256:bcf0056eecfa360a92cea1251a04eeb19a5d16938559ecf52b67d4fbfa1c249f", size = 72127576, upload-time = "2025-05-19T05:23:51.081Z" },
+]
+
+[[package]]
+name = "sudachipy"
+version = "0.6.10"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/eb/ceadfb1e9178332839a75b91393765b135ab870fad9230d47c201c931607/sudachipy-0.6.10.tar.gz", hash = "sha256:b8910a4610de98b2c3cb6dc3362fea93e3ba5059f1eb445a68baa9585278f31b", size = 71518686, upload-time = "2025-01-10T07:15:22.811Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/20/c58e1dde2b5413c68cc570f96e31c2ed1bc0b7b19b4eb67533dfaadbd94c/SudachiPy-0.6.10-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:cc97b5d48f46f9989d97e105f7dd6419da2174888fcc42e55c0e4cd46597ed3b", size = 3040385, upload-time = "2025-01-10T07:14:58.575Z" },
+    { url = "https://files.pythonhosted.org/packages/58/f4/3451dbe8fa54a7b23285512db018c622e10d649a94f134f9fc92292eb4a4/SudachiPy-0.6.10-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9794b73fffd8099d93e07882ba87eee5edbed0e4f1b94761db8f22c8e5da9904", size = 1730957, upload-time = "2025-01-10T07:15:01.296Z" },
+    { url = "https://files.pythonhosted.org/packages/47/d3/e3cbab0b5d84df3c9d46e18fa07b84e2ab0b317daafb2bcd01610895106d/SudachiPy-0.6.10-cp313-cp313-win_amd64.whl", hash = "sha256:0fc5b60920a439c534688237e2651e15e4eaadc166a63182d6e24ac7ef3e4779", size = 1378958, upload-time = "2025-01-10T07:15:03.877Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/da/279d12cab13f2affa9edd0ad4d5631573f4de07a020ad89a4ad0195f1d7c/SudachiPy-0.6.10-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:7455e5cbb4c2cf9294c82345c9d46b344774b4eb23eca917f305ed716d8d5168", size = 3033253, upload-time = "2025-01-10T07:15:06.674Z" },
+    { url = "https://files.pythonhosted.org/packages/66/ed/36eabf79eb81c38d477b77a5ab8fd62c8a4814a82c845f079f0c3b78ff18/SudachiPy-0.6.10-cp313-cp313t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:38d0de9e840ac8d199e714a40506792ea5237d0db0c966da16d51fbc74a508d6", size = 1730534, upload-time = "2025-01-10T07:15:09.348Z" },
 ]
 
 [[package]]
