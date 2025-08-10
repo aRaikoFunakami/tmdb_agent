@@ -12,7 +12,21 @@ TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 # Pydantic モデル定義（厳格な型チェックとJSONスキーマ生成）
 class MovieSearchInput(BaseModel):
     """映画検索の入力パラメータ"""
-    query: str = Field(description="検索する映画のタイトルまたはキーワード", min_length=1)
+    query: str = Field(
+        description=(
+            "検索する映画タイトルまたは最小限の関連キーワードのみを指定する。"
+            "説明文・引用符・装飾・改行は不可。"
+            "関係ない語句（例: 80年代, 車, 教えて等）は含めない。"
+            "複数語は半角スペース区切り、中黒や句読点は使わない。"
+        ),
+        min_length=1,
+        max_length=64,
+        examples=[
+            "バック トゥ ザ フューチャー",
+            "Back to the Future",
+            "ターミネーター 2",
+        ],
+    )
     language_code: Optional[str] = Field(
         default=None, 
         description="検索言語コード（例: ja-JP, en-US）。指定しない場合は自動検出。明示的に言語を指定したい場合に使用。",
@@ -21,7 +35,21 @@ class MovieSearchInput(BaseModel):
 
 class TVSearchInput(BaseModel):
     """TV番組検索の入力パラメータ"""
-    query: str = Field(description="検索するTV番組のタイトルまたはキーワード", min_length=1)
+    query: str = Field(
+        description=(
+            "検索するTV番組のタイトルまたは最小限の関連キーワードのみを指定する。"
+            "説明文・引用符・装飾・改行は不可。"
+            "関係ない語句（例: 80年代, 車, 教えて等）は含めない。"
+            "複数語は半角スペース区切り、中黒や句読点は使わない。"
+        ),
+        min_length=1,
+        max_length=64,
+        examples=[
+            "バック トゥ ザ フューチャー",
+            "Back to the Future",
+            "ターミネーター 2",
+        ],
+    )
     language_code: Optional[str] = Field(
         default=None, 
         description="検索言語コード（例: ja-JP, en-US）。指定しない場合は自動検出。明示的に言語を指定したい場合に使用。",
@@ -31,6 +59,21 @@ class TVSearchInput(BaseModel):
 class PersonSearchInput(BaseModel):
     """人物検索の入力パラメータ"""
     query: str = Field(description="検索する人物の名前", min_length=1)
+    query: str = Field(
+        description=(
+            "検索する人物の名前のみを指定する。"
+            "説明文・引用符・装飾・改行は不可。"
+            "関係ない語句（例: 80年代, 車, 教えて等）は含めない。"
+            "複数語は半角スペース区切り、中黒や句読点は使わない。"
+        ),
+        min_length=1,
+        max_length=64,
+        examples=[
+            "バック トゥ ザ フューチャー",
+            "Back to the Future",
+            "ターミネーター 2",
+        ],
+    )
     language_code: Optional[str] = Field(
         default=None, 
         description="検索言語コード（例: ja-JP, en-US）。指定しない場合は自動検出。明示的に言語を指定したい場合に使用。",
@@ -252,13 +295,15 @@ def tmdb_movie_search(query: str, language_code: Optional[str] = None) -> str:
                 overview = overview[:100] + "..."
 
             output.append(
-                f"🎬 {r['title']} ({r.get('release_date', 'N/A')})\n"
-                f"⭐ 評価: {r['vote_average']}\n"
-                f"📝 {overview}\n"
+                f"title: {r['title']}\n"
+                f"original_title: {r.get('original_title', 'N/A')}\n"
+                f"release_date: {r.get('release_date', 'N/A')}\n"
+                f"vote_average: {r['vote_average']}\n"
+                f"overview: {overview}\n"
             )
 
         # 検索に使用した言語コードを結果に含める
-        output.append(f"🌐 検索言語: {lang_code}")
+        output.append(f"language: {lang_code}")
         return "\n".join(output)
         
     except Exception as e:
@@ -292,13 +337,13 @@ def tmdb_person_search(query: str, language_code: Optional[str] = None) -> str:
             )
 
             output.append(
-                f"👤 {r['name']}\n"
-                f"🎭 職業: {r.get('known_for_department', 'N/A')}\n"
-                f"🎬 代表作: {known_for_str}\n"
+                f"person_name: {r['name']}\n"
+                f"known_for_department: {r.get('known_for_department', 'N/A')}\n"
+                f"known_for: {known_for_str}\n"
             )
 
         # 検索に使用した言語コードを結果に含める
-        output.append(f"🌐 検索言語: {lang_code}")
+        output.append(f"language: {lang_code}")
         return "\n".join(output)
         
     except Exception as e:
@@ -331,13 +376,15 @@ def tmdb_tv_search(query: str, language_code: Optional[str] = None) -> str:
             air_date = r.get("first_air_date", "N/A")
 
             output.append(
-                f"📺 {r['name']} ({air_date})\n"
-                f"⭐ 評価: {r['vote_average']}\n"
-                f"📝 {overview}\n"
+                f"name: {r['name']}\n"
+                f"original_name: {r.get('original_name', 'N/A')}\n"
+                f"air_date: {air_date}\n"
+                f"vote_average: {r['vote_average']}\n"
+                f"overview: {overview}\n"
             )
 
         # 検索に使用した言語コードを結果に含める
-        output.append(f"🌐 検索言語: {lang_code}")
+        output.append(f"language: {lang_code}")
         return "\n".join(output)
         
     except Exception as e:
@@ -366,15 +413,17 @@ def tmdb_multi_search(query: str, language_code: Optional[str] = None) -> str:
 
             if media_type == "movie":
                 output.append(
-                    f"🎬 映画: {r['title']} ({r.get('release_date', 'N/A')})\n"
-                    f"⭐ 評価: {r['vote_average']}\n"
-                    f"📝 {r.get('overview', 'あらすじ情報なし')[:100]}...\n"
+                    f"movie_title: {r['title']}\n"
+                    f"release_date: {r.get('release_date', 'N/A')}\n"
+                    f"vote_average: {r['vote_average']}\n"
+                    f"overview: {r.get('overview', 'N/A')[:100]}...\n"
                 )
             elif media_type == "tv":
                 output.append(
-                    f"📺 TV番組: {r['name']} ({r.get('first_air_date', 'N/A')})\n"
-                    f"⭐ 評価: {r['vote_average']}\n"
-                    f"📝 {r.get('overview', 'あらすじ情報なし')[:100]}...\n"
+                    f"tv_name: {r['name']}\n"
+                    f"first_air_date: {r.get('first_air_date', 'N/A')}\n"
+                    f"vote_average: {r['vote_average']}\n"
+                    f"overview: {r.get('overview', 'N/A')[:100]}...\n"
                 )
             elif media_type == "person":
                 known_for_titles = [
@@ -385,13 +434,13 @@ def tmdb_multi_search(query: str, language_code: Optional[str] = None) -> str:
                     ", ".join(known_for_titles) if known_for_titles else "代表作情報なし"
                 )
                 output.append(
-                    f"👤 人物: {r['name']}\n"
-                    f"🎭 職業: {r.get('known_for_department', 'N/A')}\n"
-                    f"🎬 代表作: {known_for_str}\n"
+                    f"person_name: {r['name']}\n"
+                    f"known_for_department: {r.get('known_for_department', 'N/A')}\n"
+                    f"known_for: {known_for_str}\n"
                 )
 
         # 検索に使用した言語コードを結果に含める
-        output.append(f"🌐 検索言語: {lang_code}")
+        output.append(f"language: {lang_code}")
         return "\n".join(output)
         
     except Exception as e:
@@ -420,8 +469,8 @@ def get_tmdb_movie_credits(movie_id: str, language_code: str = None) -> str:
             return f"映画ID {movie_id} のクレジット情報が見つかりませんでした。"
         
         output = []
-        output.append(f"🎬 映画ID {movie_id} のクレジット情報\n")
-        
+        output.append(f"movie_id: {movie_id}\n")
+
         # 監督とプロデューサーを取得
         crew = res.get("crew", [])
         directors = [person for person in crew if person.get("job") == "Director"]
@@ -430,26 +479,26 @@ def get_tmdb_movie_credits(movie_id: str, language_code: str = None) -> str:
         
         if directors:
             director_names = [d["name"] for d in directors[:3]]
-            output.append(f"🎬 監督: {', '.join(director_names)}")
+            output.append(f"director: {', '.join(director_names)}")
         
         if producers:
             producer_names = [p["name"] for p in producers[:3]]
-            output.append(f"🎭 プロデューサー: {', '.join(producer_names)}")
+            output.append(f"producer: {', '.join(producer_names)}")
             
         if writers:
             writer_names = [w["name"] for w in writers[:3]]
-            output.append(f"✍️ 脚本: {', '.join(writer_names)}")
-        
+            output.append(f"writer: {', '.join(writer_names)}")
+
         # 主要キャストを取得（上位10名）
         cast = res.get("cast", [])[:10]
         if cast:
-            output.append("\n👥 主要キャスト:")
+            output.append("\ncast:")
             for actor in cast:
-                character = actor.get("character", "役名不明")
+                character = actor.get("character", "character not specified")
                 output.append(f"  • {actor['name']} as {character}")
         
         # 検索に使用した言語コードを結果に含める
-        output.append(f"\n🌐 検索言語: {language_code}")
+        output.append(f"\nlanguage: {language_code}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -481,8 +530,8 @@ def get_tmdb_tv_credits(tv_id: str, language_code: str = None) -> str:
             return f"TV番組ID {tv_id} のクレジット情報が見つかりませんでした。"
         
         output = []
-        output.append(f"📺 TV番組ID {tv_id} のクレジット情報\n")
-        
+        output.append(f"tv_id: {tv_id}\n")
+
         # クリエイターとプロデューサーを取得
         crew = res.get("crew", [])
         creators = [person for person in crew if person.get("job") in ["Creator", "Executive Producer"]]
@@ -491,26 +540,26 @@ def get_tmdb_tv_credits(tv_id: str, language_code: str = None) -> str:
         
         if creators:
             creator_names = [c["name"] for c in creators[:3]]
-            output.append(f"📺 クリエイター/エグゼクティブプロデューサー: {', '.join(creator_names)}")
+            output.append(f"creator: {', '.join(creator_names)}")
         
         if directors:
             director_names = [d["name"] for d in directors[:3]]
-            output.append(f"🎬 監督: {', '.join(director_names)}")
+            output.append(f"director: {', '.join(director_names)}")
             
         if writers:
             writer_names = [w["name"] for w in writers[:3]]
-            output.append(f"✍️ 脚本: {', '.join(writer_names)}")
-        
+            output.append(f"writer: {', '.join(writer_names)}")
+
         # 主要キャストを取得（上位10名）
         cast = res.get("cast", [])[:10]
         if cast:
-            output.append("\n👥 主要キャスト:")
+            output.append("\ncast:")
             for actor in cast:
-                character = actor.get("character", "役名不明")
+                character = actor.get("character", "character not specified")
                 output.append(f"  • {actor['name']} as {character}")
         
         # 検索に使用した言語コードを結果に含める
-        output.append(f"\n🌐 検索言語: {language_code}")
+        output.append(f"\nlanguage: {language_code}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -568,8 +617,11 @@ def tmdb_movie_credits_search(query: str, language_code: Optional[str] = None) -
         movie_id = movie["id"]
         
         output = []
-        output.append(f"🎬 検索結果: {movie['title']} ({movie.get('release_date', 'N/A')})")
-        output.append(f"⭐ 評価: {movie['vote_average']}/10")
+        output.append(f"title: {movie['title']} ({movie.get('release_date', 'N/A')})")
+        output.append(f"original_title: {movie.get('original_title', 'N/A')}")
+        output.append(f"overview: {movie.get('overview', 'N/A')[:100]}...")
+        output.append(f"release_date: {movie.get('release_date', 'N/A')}")
+        output.append(f"vote_average: {movie['vote_average']}/10")
         output.append("")
         
         # クレジット情報を取得
@@ -604,8 +656,11 @@ def tmdb_tv_credits_search(query: str, language_code: Optional[str] = None) -> s
         tv_id = tv_show["id"]
         
         output = []
-        output.append(f"📺 検索結果: {tv_show['name']} ({tv_show.get('first_air_date', 'N/A')})")
-        output.append(f"⭐ 評価: {tv_show['vote_average']}/10")
+        output.append(f"name: {tv_show['name']}")
+        output.append(f"original_name: {tv_show.get('original_name', 'N/A')}")
+        output.append(f"overview: {tv_show.get('overview', 'N/A')[:100]}...")
+        output.append(f"first_air_date: {tv_show.get('first_air_date', 'N/A')}")
+        output.append(f"vote_average: {tv_show['vote_average']}/10")
         output.append("")
         
         # クレジット情報を取得
@@ -657,8 +712,8 @@ def tmdb_popular_people(page: int = 1, language_code: Optional[str] = None) -> s
             return f"ページ {page} に人物データが見つかりませんでした。（総ページ数: {total_pages}）"
 
         output = []
-        output.append(f"🌟 人気順人物リスト（ページ {page}/{total_pages}）")
-        output.append(f"📊 総人数: {total_results:,}人")
+        output.append(f"page_info: {page}/{total_pages}）")
+        output.append(f"total_results: {total_results:,}")
         output.append("")
         
         for i, person in enumerate(results[:15], 1):  # 上位15人を表示
@@ -670,9 +725,9 @@ def tmdb_popular_people(page: int = 1, language_code: Optional[str] = None) -> s
                     # 映画かTV番組かを判別
                     media_type = work.get("media_type", "")
                     if media_type == "movie":
-                        known_for_titles.append(f"🎬 {title}")
+                        known_for_titles.append(f"movie_title: {title}")
                     elif media_type == "tv":
-                        known_for_titles.append(f"📺 {title}")
+                        known_for_titles.append(f"tv_show_title: {title}")
                     else:
                         known_for_titles.append(title)
             
@@ -682,20 +737,20 @@ def tmdb_popular_people(page: int = 1, language_code: Optional[str] = None) -> s
             popularity = person.get("popularity", 0)
             
             output.append(
-                f"{i:2d}. 👤 {person.get('name', '名前不明')}\n"
-                f"    🎭 職業: {person.get('known_for_department', 'N/A')}\n"
-                f"    ⭐ 人気度: {popularity:.1f}\n"
-                f"    🎬 代表作: {known_for_str}\n"
+                f"{i:2d}. people_name: {person.get('name', 'N/A')}\n"
+                f"    known_for_department: {person.get('known_for_department', 'N/A')}\n"
+                f"    popularity: {popularity:.1f}\n"
+                f"    known_for: {known_for_str}\n"
             )
         
         # ページネーション情報
         if total_pages > 1:
-            output.append(f"📄 ページ情報: {page}/{total_pages}")
+            output.append(f"page_info: {page}/{total_pages}")
             if page < total_pages:
-                output.append(f"💡 次のページを見るには page={page+1} を指定してください")
+                output.append(f"To view the next page, specify page={page+1}")
         
         # 検索に使用した言語コードを結果に含める
-        output.append(f"🌐 検索言語: {lang_code}")
+        output.append(f"language: {lang_code}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -772,7 +827,7 @@ def web_search_supplement(query: str) -> str:
                 formatted_result += f"\n🔗 詳細: {url}"
             formatted_results.append(formatted_result)
 
-        return f"🌐 Web検索結果（「{query}」の補完情報）：\n\n" + "\n\n".join(formatted_results)
+        return f"Web search results (supplementary information for '{query}'):\n\n" + "\n\n".join(formatted_results)
 
     except ImportError:
         return "Web検索ツールが利用できません。langchain-tavilyがインストールされているか確認してください。"
@@ -814,9 +869,8 @@ def tmdb_trending_all(time_window: str = "day", language_code: Optional[str] = N
         if not results:
             return f"トレンドデータが見つかりませんでした。（時間枠: {time_window}, 言語: {lang_code}）"
 
-        time_window_jp = "日別" if time_window == "day" else "週別"
         output = []
-        output.append(f"🔥 {time_window_jp}トレンド（全コンテンツ）")
+        output.append(f"{time_window} Trend (All Contents)")
         output.append("")
         
         for i, item in enumerate(results, 1):
@@ -829,9 +883,9 @@ def tmdb_trending_all(time_window: str = "day", language_code: Optional[str] = N
                 overview = item.get("overview", "")[:100]
                 
                 output.append(
-                    f"{i:2d}. 🎬 映画: {title} ({release_date})\n"
-                    f"    ⭐ 評価: {vote_average:.1f}/10\n"
-                    f"    📝 {overview}{'...' if len(overview) >= 100 else ''}\n"
+                    f"{i:2d}. movie_title: {title} ({release_date})\n"
+                    f"    vote_average: {vote_average:.1f}/10\n"
+                    f"    overview: {overview}{'...' if len(overview) >= 100 else ''}\n"
                 )
                 
             elif media_type == "tv":
@@ -841,9 +895,9 @@ def tmdb_trending_all(time_window: str = "day", language_code: Optional[str] = N
                 overview = item.get("overview", "")[:100]
                 
                 output.append(
-                    f"{i:2d}. 📺 TV番組: {title} ({first_air_date})\n"
-                    f"    ⭐ 評価: {vote_average:.1f}/10\n"
-                    f"    📝 {overview}{'...' if len(overview) >= 100 else ''}\n"
+                    f"{i:2d}. tv_show_title: {title} ({first_air_date})\n"
+                    f"    vote_average: {vote_average:.1f}/10\n"
+                    f"    overview: {overview}{'...' if len(overview) >= 100 else ''}\n"
                 )
                 
             elif media_type == "person":
@@ -861,14 +915,14 @@ def tmdb_trending_all(time_window: str = "day", language_code: Optional[str] = N
                 known_for_str = ", ".join(known_for_titles) if known_for_titles else "代表作情報なし"
                 
                 output.append(
-                    f"{i:2d}. 👤 人物: {name}\n"
-                    f"    🎭 職業: {known_for_department}\n"
-                    f"    ⭐ 人気度: {popularity:.1f}\n"
-                    f"    🎬 代表作: {known_for_str}\n"
+                    f"{i:2d}. person_name: {name}\n"
+                    f"    known_for_department: {known_for_department}\n"
+                    f"    popularity: {popularity:.1f}\n"
+                    f"    known_for: {known_for_str}\n"
                 )
-        
-        output.append(f"🌐 検索言語: {lang_code}")
-        output.append(f"⏰ 時間枠: {time_window_jp}")
+
+        output.append(f"language: {lang_code}")
+        output.append(f"time_window: {time_window}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -911,9 +965,9 @@ def tmdb_trending_movies(time_window: str = "day", language_code: Optional[str] 
         if not results:
             return f"映画のトレンドデータが見つかりませんでした。（時間枠: {time_window}, 言語: {lang_code}）"
 
-        time_window_jp = "日別" if time_window == "day" else "週別"
         output = []
-        output.append(f"🎬 {time_window_jp}トレンド映画")
+        time_window_jp = "Daily" if time_window == "day" else "Weekly"
+        output.append(f"{time_window_jp} Trending Movies")
         output.append("")
         
         for i, movie in enumerate(results, 1):
@@ -924,14 +978,15 @@ def tmdb_trending_movies(time_window: str = "day", language_code: Optional[str] 
             overview = movie.get("overview", "")[:150]
             
             output.append(
-                f"{i:2d}. 🎬 {title} ({release_date})\n"
-                f"    ⭐ 評価: {vote_average:.1f}/10\n"
-                f"    🔥 人気度: {popularity:.1f}\n"
-                f"    📝 {overview}{'...' if len(overview) >= 150 else ''}\n"
+                f"{i:2d}. title: {title}\n"
+                f"    release_date: {release_date}\n"
+                f"    vote_average: {vote_average:.1f}/10\n"
+                f"    popularity: {popularity:.1f}\n"
+                f"    overview: {overview}{'...' if len(overview) >= 150 else ''}\n"
             )
         
-        output.append(f"🌐 検索言語: {lang_code}")
-        output.append(f"⏰ 時間枠: {time_window_jp}")
+        output.append(f"language: {lang_code}")
+        output.append(f"time_window: {time_window_jp}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -974,9 +1029,8 @@ def tmdb_trending_tv(time_window: str = "day", language_code: Optional[str] = No
         if not results:
             return f"TV番組のトレンドデータが見つかりませんでした。（時間枠: {time_window}, 言語: {lang_code}）"
 
-        time_window_jp = "日別" if time_window == "day" else "週別"
         output = []
-        output.append(f"📺 {time_window_jp}トレンドTV番組")
+        output.append(f"{time_window} Trending TV Shows")
         output.append("")
         
         for i, tv_show in enumerate(results, 1):
@@ -987,14 +1041,14 @@ def tmdb_trending_tv(time_window: str = "day", language_code: Optional[str] = No
             overview = tv_show.get("overview", "")[:150]
             
             output.append(
-                f"{i:2d}. 📺 {name} ({first_air_date})\n"
-                f"    ⭐ 評価: {vote_average:.1f}/10\n"
-                f"    🔥 人気度: {popularity:.1f}\n"
-                f"    📝 {overview}{'...' if len(overview) >= 150 else ''}\n"
+                f"{i:2d}. name: {name} ({first_air_date})\n"
+                f"    vote_average: {vote_average:.1f}/10\n"
+                f"    popularity: {popularity:.1f}\n"
+                f"    overview: {overview}{'...' if len(overview) >= 150 else ''}\n"
             )
-        
-        output.append(f"🌐 検索言語: {lang_code}")
-        output.append(f"⏰ 時間枠: {time_window_jp}")
+
+        output.append(f"language: {lang_code}")
+        output.append(f"time_window: {time_window}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -1037,9 +1091,9 @@ def tmdb_trending_people(time_window: str = "day", language_code: Optional[str] 
         if not results:
             return f"人物のトレンドデータが見つかりませんでした。（時間枠: {time_window}, 言語: {lang_code}）"
 
-        time_window_jp = "日別" if time_window == "day" else "週別"
         output = []
-        output.append(f"👤 {time_window_jp}トレンド人物")
+
+        output.append(f"{time_window} Trending People")
         output.append("")
         
         for i, person in enumerate(results, 1):
@@ -1054,23 +1108,23 @@ def tmdb_trending_people(time_window: str = "day", language_code: Optional[str] 
                 if work_title:
                     media_type = work.get("media_type", "")
                     if media_type == "movie":
-                        known_for_titles.append(f"🎬 {work_title}")
+                        known_for_titles.append(f"movie_work_title: {work_title}")
                     elif media_type == "tv":
-                        known_for_titles.append(f"📺 {work_title}")
+                        known_for_titles.append(f"tv_work_title: {work_title}")
                     else:
-                        known_for_titles.append(work_title)
-            
+                        known_for_titles.append(f"work_title: {work_title}")
+
             known_for_str = ", ".join(known_for_titles) if known_for_titles else "代表作情報なし"
             
             output.append(
-                f"{i:2d}. 👤 {name}\n"
-                f"    🎭 職業: {known_for_department}\n"
-                f"    🔥 人気度: {popularity:.1f}\n"
-                f"    🎬 代表作: {known_for_str}\n"
+                f"{i:2d}. name: {name}\n"
+                f"    known_for_department: {known_for_department}\n"
+                f"    popularity: {popularity:.1f}\n"
+                f"    known_for: {known_for_str}\n"
             )
-        
-        output.append(f"🌐 検索言語: {lang_code}")
-        output.append(f"⏰ 時間枠: {time_window_jp}")
+
+        output.append(f"language: {lang_code}")
+        output.append(f"time_window: {time_window}")
         return "\n".join(output)
         
     except requests.RequestException as e:
@@ -1170,8 +1224,6 @@ def theme_song_search(query: str) -> str:
                 content_preview += "..."
 
             formatted_result = f"{i}. **{title}**\n{content_preview}"
-            if url:
-                formatted_result += f"\n🔗 詳細: {url}"
             formatted_results.append(formatted_result)
 
         return f"🎵 主題歌・楽曲検索結果（「{query}」）：\n\n" + "\n\n".join(formatted_results)

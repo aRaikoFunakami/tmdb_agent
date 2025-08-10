@@ -307,6 +307,7 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
     for i, test_case in enumerate(test_cases, 1):
         if i in selected_tests:
             print(f"\n=== テスト {i}: {test_case['title']} ===")
+            print(f"クエリ: {test_case['query']}")
             
             if debug_mode:
                 # デバッグモードでは詳細な実行情報を取得
@@ -357,7 +358,7 @@ def run_chat_mode():
     from langchain_openai import ChatOpenAI
     
     try:
-        llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
+        llm = ChatOpenAI(model="gpt-5-mini", temperature=0.1)
     except Exception as e:
         print(f"❌ LLMの初期化に失敗しました: {e}")
         print("OPENAI_API_KEYが設定されているか確認してください。")
