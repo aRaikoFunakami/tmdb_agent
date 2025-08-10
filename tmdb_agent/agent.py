@@ -98,7 +98,7 @@ class TMDBSearchAgent:
     Examples:
         >>> # 基本的な使用方法
         >>> from langchain_openai import ChatOpenAI
-        >>> llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
+        >>> llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
         >>> agent = TMDBSearchAgent(llm)
         >>> result = agent.search("進撃の巨人について教えて")
         >>> print(result)
@@ -127,7 +127,7 @@ class TMDBSearchAgent:
         Examples:
             >>> # OpenAIを使用する場合
             >>> from langchain_openai import ChatOpenAI
-            >>> llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
+            >>> llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
             >>> agent = TMDBSearchAgent(llm=llm)
 
             >>> # Geminiを使用する場合
