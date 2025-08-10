@@ -1249,11 +1249,10 @@ def theme_song_search(query: str) -> str:
         for i, result in enumerate(search_results[:5], 1):
             title = result.get("title", "不明なタイトル")
             content = result.get("content", "")
-            url = result.get("url", "")
 
             # 内容を適切な長さに制限
-            content_preview = content[:250] if content else "内容情報なし"
-            if len(content) > 250:
+            content_preview = content[:500] if content else "内容情報なし"
+            if len(content) > 500:
                 content_preview += "..."
 
             formatted_result = f"{i}. **{title}**\n{content_preview}"
