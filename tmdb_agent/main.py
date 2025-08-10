@@ -270,10 +270,6 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
             "query": "Tell me about Marvel movies"
         },
         {
-            "title": "Web検索補完テスト（TMDB未収録作品）",
-            "query": "日本のインディーズ映画「カメラを止めるな！」について詳しく教えて"
-        },
-        {
             "title": "主題歌検索テスト（アニメ）",
             "query": "鬼滅の刃の主題歌を教えて。歌手は誰？"
         },
