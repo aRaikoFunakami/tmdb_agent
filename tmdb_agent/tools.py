@@ -309,8 +309,9 @@ def tmdb_movie_search(query: str, language_code: Optional[str] = None) -> str:
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
 
-    # 形態素解析して検索クエリを整形
-    query = " ".join(tokenize_text(query))
+    # 日本語の場合は形態素解析を行う
+    if( lang_code == "ja-JP" ):
+        query = " ".join(tokenize_text(query))
 
     url = "https://api.themoviedb.org/3/search/movie"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
@@ -350,8 +351,9 @@ def tmdb_person_search(query: str, language_code: Optional[str] = None) -> str:
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
 
-    # 形態素解析して検索クエリを整形
-    query = " ".join(tokenize_text(query))
+    # 日本語の場合は形態素解析を行う
+    if( lang_code == "ja-JP" ):
+        query = " ".join(tokenize_text(query))
     
     url = "https://api.themoviedb.org/3/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
@@ -393,8 +395,9 @@ def tmdb_tv_search(query: str, language_code: Optional[str] = None) -> str:
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
 
-    # 形態素解析して検索クエリを整形
-    query = " ".join(tokenize_text(query))
+    # 日本語の場合は形態素解析を行う
+    if( lang_code == "ja-JP" ):
+        query = " ".join(tokenize_text(query))
     
     url = "https://api.themoviedb.org/3/search/tv"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
@@ -437,8 +440,9 @@ def tmdb_multi_search(query: str, language_code: Optional[str] = None) -> str:
     # 言語コードを決定
     lang_code = get_language_code(query, language_code)
 
-    # 形態素解析して検索クエリを整形
-    query = " ".join(tokenize_text(query))
+    # 日本語の場合は形態素解析を行う
+    if( lang_code == "ja-JP" ):
+        query = " ".join(tokenize_text(query))
     
     url = "https://api.themoviedb.org/3/search/multi"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": lang_code}
