@@ -148,9 +148,10 @@ def list_available_tests():
         "TV番組トレンド取得",
         "人物トレンド取得",
         "多言語対応テスト",
-        "Web検索補完テスト（TMDB未収録作品）",
         "主題歌検索テスト（アニメ）",
         "主題歌検索テスト（映画）",
+        "制作会社検索テスト",
+        "制作会社による映画検索テスト",
     ]
     
     print("=== 利用可能なテストケース ===")
@@ -218,7 +219,7 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
     # OpenAI LLMを作成
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)  # 温度を下げて一貫性を向上
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)  # 温度を下げて一貫性を向上
 
     # エージェントを作成
     agent = create_tmdb_agent(llm, verbose=True)
@@ -255,11 +256,11 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
         },
         {
             "title": "映画トレンド取得",
-            "query": "一昨日ののトレンド映画を教えて。"
+            "query": "トレンド映画を教えて。"
         },
         {
             "title": "TV番組トレンド取得",
-            "query": "昨日のトレンドTV番組を教えて。"
+            "query": "話題のTV番組を教えて。"
         },
         {
             "title": "人物トレンド取得",
@@ -267,7 +268,7 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
         },
         {
             "title": "多言語対応テスト", 
-            "query": "Tell me about Marvel movies"
+            "query": "Show me movies produced by Marvel Studios"
         },
         {
             "title": "主題歌検索テスト（アニメ）",
@@ -276,6 +277,14 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
         {
             "title": "主題歌検索テスト（映画）",
             "query": "君の名はの主題歌とRADWIMPSについて詳しく"
+        },
+        {
+            "title": "制作会社検索テスト",
+            "query": "Studio Ghibliという制作会社について教えて。"
+        },
+        {
+            "title": "制作会社による映画検索テスト",
+            "query": "Marvel Studiosが制作した映画を人気順で教えて。"
         },
     ]
 
@@ -354,7 +363,7 @@ def run_chat_mode():
     from langchain_openai import ChatOpenAI
     
     try:
-        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
+        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
     except Exception as e:
         print(f"❌ LLMの初期化に失敗しました: {e}")
         print("OPENAI_API_KEYが設定されているか確認してください。")
