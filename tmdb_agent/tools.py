@@ -160,12 +160,8 @@ class ThemeSongSearchInput(BaseModel):
 
 class PopularPeopleInput(BaseModel):
     """人気順人物リスト取得の入力パラメータ"""
-    page: int = Field(default=1, description="取得するページ番号（1-500、デフォルト: 1）", ge=1, le=500)
-    language_code: Optional[str] = Field(
-        default=None, 
-        description="検索言語コード（ja-JP, en-US等）",
-        pattern="^[a-z]{2}-[A-Z]{2}$"
-    )
+    """No arguments needed."""
+    pass
 
 class TrendingInput(BaseModel):
     """トレンド検索の入力パラメータ"""
@@ -721,22 +717,12 @@ def tmdb_tv_credits_search(query: str, language_code: Optional[str] = None) -> s
 
 
 @tool("tmdb_popular_people", args_schema=PopularPeopleInput)
-def tmdb_popular_people(page: int = 1, language_code: Optional[str] = None) -> str:
+def tmdb_popular_people() -> str:
     """TMDBで人気順の人物リスト（俳優・監督・その他業界人）を取得します。デフォルトでページ1、上位15人を表示。"""
     
-    # 言語コードの決定（優先順位: 1.明示的指定 2.環境変数 3.デフォルト ja-JP）
-    if language_code:
-        lang_code = language_code
-    else:
-        # TMDB_API_LANG環境変数をチェック
-        tmdb_api_lang = os.getenv("TMDB_API_LANG")
-        lang_code = tmdb_api_lang if tmdb_api_lang else "ja-JP"
-    
-    # ページ番号の検証
-    if page < 1:
-        page = 1
-    elif page > 500:  # TMDBの制限
-        page = 500
+    tmdb_api_lang = os.getenv("TMDB_API_LANG")
+    lang_code = tmdb_api_lang if tmdb_api_lang else "ja-JP"
+    page = 1  # デフォルトページ
     
     url = "https://api.themoviedb.org/3/person/popular"
     params = {
