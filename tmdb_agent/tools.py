@@ -158,6 +158,24 @@ class ThemeSongSearchInput(BaseModel):
     """主題歌・楽曲検索の入力パラメータ"""
     query: str = Field(description="主題歌・楽曲を検索するキーワード（映画・アニメ・ドラマのタイトルや歌手名など）", min_length=1)
 
+class CompanySearchInput(BaseModel):
+    """会社検索の入力パラメータ"""
+    query: str = Field(description="検索する制作会社名（例: Marvel, Studio Ghibli, Warner Bros）", min_length=1)
+
+class MoviesByCompanyInput(BaseModel):
+    """制作会社による映画検索の入力パラメータ"""
+    company_name: str = Field(description="制作会社名（複数の場合はカンマ区切り）", min_length=1)
+    sort_by: Optional[str] = Field(
+        default="popularity.desc", 
+        description="ソート方法: popularity.desc, release_date.desc, vote_average.desc等"
+    )
+    page: Optional[int] = Field(default=1, description="ページ番号（1以上）", ge=1)
+    language_code: Optional[str] = Field(
+        default=None, 
+        description="検索言語コード（例: ja-JP, en-US）", 
+        pattern="^[a-z]{2}-[A-Z]{2}$"
+    )
+
 class PopularPeopleInput(BaseModel):
     """人気順人物リスト取得の入力パラメータ"""
     """No arguments needed."""
@@ -215,8 +233,12 @@ TOOL_DESCRIPTIONS = {
     "tmdb_get_trending_people": "人物の日別トレンドを取得（引数なし・シンプル版）- 今日・直近のトレンド",
     "web_search_supplement": "TMDBで見つからない映画・TV・人物情報をWebから検索して補完",
     "theme_song_search": "映画・アニメ・ドラマの主題歌・エンディング・挿入歌や歌手情報をWebから検索",
-}# プロンプト用のツール説明文
-TOOL_NAMES = "tmdb_movie_search, tmdb_tv_search, tmdb_person_search, tmdb_multi_search, tmdb_movie_credits_search, tmdb_tv_credits_search, current_trends_search"
+    "tmdb_company_search": "制作会社・配給会社・プロダクション会社を名前で検索してIDを取得",
+    "tmdb_movies_by_company": "制作会社IDに基づいて映画を検索（複数会社のOR検索対応）",
+}
+
+# プロンプト用のツール説明文
+TOOL_NAMES = "tmdb_movie_search, tmdb_tv_search, tmdb_person_search, tmdb_multi_search, tmdb_movie_credits_search, tmdb_tv_credits_search, tmdb_credits_search_by_id, tmdb_popular_people, tmdb_get_popular_people, tmdb_trending_all, tmdb_trending_movies, tmdb_trending_tv, tmdb_trending_people, tmdb_get_trending_all, tmdb_get_trending_movies, tmdb_get_trending_tv, tmdb_get_trending_people, web_search_supplement, theme_song_search, tmdb_company_search, tmdb_movies_by_company"
 
 
 def get_supported_languages() -> dict:
@@ -1204,6 +1226,129 @@ def tmdb_get_trending_people() -> str:
     return tmdb_trending_people.invoke({"time_window": "day", "language_code": None})
 
 
+@tool("tmdb_company_search", args_schema=CompanySearchInput)
+def tmdb_company_search(query: str) -> str:
+    """制作会社・配給会社・プロダクション会社を名前で検索してIDと詳細情報を取得します。"""
+    url = "https://api.themoviedb.org/3/search/company"
+    params = {"api_key": TMDB_API_KEY, "query": query}
+    
+    try:
+        res = requests.get(url, params=params).json()
+        results = res.get("results", [])[:10]  # 上位10件
+        
+        if not results:
+            return f"「{query}」に一致する制作会社が見つかりませんでした。"
+
+        output = []
+        output.append(f"Company search results for '{query}':")
+        output.append("")
+        
+        for i, company in enumerate(results, 1):
+            company_id = company.get("id")
+            name = company.get("name", "会社名不明")
+            logo_path = company.get("logo_path", "")
+            origin_country = company.get("origin_country", "N/A")
+            
+            logo_info = f"Logo: https://image.tmdb.org/t/p/w500{logo_path}" if logo_path else "Logo: なし"
+            
+            output.append(
+                f"{i:2d}. company_name: {name}\n"
+                f"    company_id: {company_id}\n"
+                f"    origin_country: {origin_country}\n"
+                f"    {logo_info}\n"
+            )
+
+        return "\n".join(output)
+        
+    except Exception as e:
+        return f"制作会社検索でエラーが発生しました: {str(e)}"
+
+
+@tool("tmdb_movies_by_company", args_schema=MoviesByCompanyInput)
+def tmdb_movies_by_company(company_name: str, sort_by: str = "popularity.desc", page: int = 1, language_code: Optional[str] = None) -> str:
+    """制作会社名に基づいて映画を検索します。複数会社の場合はカンマ区切りでOR検索が可能です。"""
+    # 言語コードの決定
+    lang_code = language_code or detect_language_and_get_tmdb_code(company_name)
+    
+    # 複数の会社名をカンマで分割
+    company_names = [name.strip() for name in company_name.split(",")]
+    company_ids = []
+    
+    # 各会社名のIDを取得
+    for name in company_names:
+        try:
+            search_url = "https://api.themoviedb.org/3/search/company"
+            search_params = {"api_key": TMDB_API_KEY, "query": name}
+            search_res = requests.get(search_url, params=search_params).json()
+            
+            search_results = search_res.get("results", [])
+            if search_results:
+                # 最も関連性の高い結果（最初の結果）を使用
+                company_id = search_results[0]["id"]
+                company_ids.append(str(company_id))
+        except Exception:
+            continue
+    
+    if not company_ids:
+        return f"「{company_name}」に一致する制作会社が見つかりませんでした。"
+    
+    # パイプ区切りでOR検索用のIDリストを作成
+    with_companies = "|".join(company_ids)
+    
+    # Discover APIで映画を検索
+    discover_url = "https://api.themoviedb.org/3/discover/movie"
+    discover_params = {
+        "api_key": TMDB_API_KEY,
+        "with_companies": with_companies,
+        "sort_by": sort_by,
+        "page": page,
+        "language": lang_code
+    }
+    
+    try:
+        res = requests.get(discover_url, params=discover_params).json()
+        results = res.get("results", [])[:15]  # 上位15件
+        total_results = res.get("total_results", 0)
+        total_pages = res.get("total_pages", 0)
+        
+        if not results:
+            return f"「{company_name}」が制作した映画が見つかりませんでした。（ページ: {page}）"
+
+        output = []
+        output.append(f"Movies by company: {company_name}")
+        output.append(f"Company IDs: {with_companies}")
+        output.append(f"Page: {page}/{total_pages} (Total: {total_results:,} movies)")
+        output.append(f"Sort: {sort_by}")
+        output.append("")
+        
+        for i, movie in enumerate(results, 1):
+            title = movie.get("title", "タイトル不明")
+            original_title = movie.get("original_title", "N/A")
+            release_date = movie.get("release_date", "N/A")
+            vote_average = movie.get("vote_average", 0)
+            popularity = movie.get("popularity", 0)
+            overview = movie.get("overview", "")[:100]
+            
+            output.append(
+                f"{i:2d}. title: {title}\n"
+                f"    original_title: {original_title}\n"
+                f"    release_date: {release_date}\n"
+                f"    vote_average: {vote_average:.1f}/10\n"
+                f"    popularity: {popularity:.1f}\n"
+                f"    overview: {overview}{'...' if len(overview) >= 100 else ''}\n"
+            )
+        
+        # ページング情報
+        if total_pages > 1:
+            output.append(f"Next page: page={page+1}" if page < total_pages else "This is the last page")
+        
+        output.append(f"language: {lang_code}")
+        return "\n".join(output)
+        
+    except Exception as e:
+        return f"制作会社による映画検索でエラーが発生しました: {str(e)}"
+
+
 @tool("theme_song_search", args_schema=ThemeSongSearchInput)
 def theme_song_search(query: str) -> str:
     """映画・アニメ・ドラマの主題歌・エンディング・挿入歌や歌手情報をWebから検索します。
@@ -1289,11 +1434,13 @@ TOOLS = [
     tmdb_get_trending_people,
     web_search_supplement,
     theme_song_search,
+    tmdb_company_search,
+    tmdb_movies_by_company,
 ]
 
 # プロンプト用のツール説明文
-TOOLS_TEXT = "tmdb_movie_search: 映画の具体的なタイトルで検索\ntmdb_tv_search: TV番組の具体的なタイトルで検索\ntmdb_person_search: 具体的な人名で検索\ntmdb_multi_search: 映画・TV・人物を横断検索\ntmdb_movie_credits_search: 映画の詳細なクレジット情報を取得（タイトル検索）\ntmdb_tv_credits_search: TV番組の詳細なクレジット情報を取得（タイトル検索）\ntmdb_credits_search_by_id: 映画IDまたはTV番組IDを直接指定してクレジット情報を取得\ntmdb_popular_people: 人気順で人物リストを取得（ページ指定可能）\ntmdb_get_popular_people: 人気順で人物リストを取得（引数なし：Action Input は空で）\ntmdb_trending_all: 全コンテンツのトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_movies: 映画のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_tv: TV番組のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_people: 人物のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_get_trending_all: 全コンテンツの日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_movies: 映画の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_tv: TV番組の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_people: 人物の日別トレンドを取得（引数なし：Action Input は空で）\nweb_search_supplement: TMDBで見つからない情報をWebから検索して補完\ntheme_song_search: 映画・アニメ・ドラマの主題歌・楽曲・歌手情報をWebから検索"
-TOOL_NAMES = "tmdb_movie_search, tmdb_tv_search, tmdb_person_search, tmdb_multi_search, tmdb_movie_credits_search, tmdb_tv_credits_search, tmdb_credits_search_by_id, tmdb_popular_people, tmdb_get_popular_people, tmdb_trending_all, tmdb_trending_movies, tmdb_trending_tv, tmdb_trending_people, tmdb_get_trending_all, tmdb_get_trending_movies, tmdb_get_trending_tv, tmdb_get_trending_people, web_search_supplement, theme_song_search"
+TOOLS_TEXT = "tmdb_movie_search: 映画の具体的なタイトルで検索\ntmdb_tv_search: TV番組の具体的なタイトルで検索\ntmdb_person_search: 具体的な人名で検索\ntmdb_multi_search: 映画・TV・人物を横断検索\ntmdb_movie_credits_search: 映画の詳細なクレジット情報を取得（タイトル検索）\ntmdb_tv_credits_search: TV番組の詳細なクレジット情報を取得（タイトル検索）\ntmdb_credits_search_by_id: 映画IDまたはTV番組IDを直接指定してクレジット情報を取得\ntmdb_popular_people: 人気順で人物リストを取得（ページ指定可能）\ntmdb_get_popular_people: 人気順で人物リストを取得（引数なし：Action Input は空で）\ntmdb_trending_all: 全コンテンツのトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_movies: 映画のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_tv: TV番組のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_people: 人物のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_get_trending_all: 全コンテンツの日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_movies: 映画の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_tv: TV番組の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_people: 人物の日別トレンドを取得（引数なし：Action Input は空で）\nweb_search_supplement: TMDBで見つからない情報をWebから検索して補完\ntheme_song_search: 映画・アニメ・ドラマの主題歌・楽曲・歌手情報をWebから検索\ntmdb_company_search: 制作会社・配給会社・プロダクション会社を名前で検索してIDを取得\ntmdb_movies_by_company: 制作会社IDに基づいて映画を検索（複数会社のOR検索対応）"
+TOOL_NAMES = "tmdb_movie_search, tmdb_tv_search, tmdb_person_search, tmdb_multi_search, tmdb_movie_credits_search, tmdb_tv_credits_search, tmdb_credits_search_by_id, tmdb_popular_people, tmdb_get_popular_people, tmdb_trending_all, tmdb_trending_movies, tmdb_trending_tv, tmdb_trending_people, tmdb_get_trending_all, tmdb_get_trending_movies, tmdb_get_trending_tv, tmdb_get_trending_people, web_search_supplement, theme_song_search, tmdb_company_search, tmdb_movies_by_company"
 
 
 # エクスポート用の関数リスト
@@ -1318,6 +1465,8 @@ __all__ = [
     "tmdb_get_trending_people",
     "web_search_supplement",
     "theme_song_search",
+    "tmdb_company_search",
+    "tmdb_movies_by_company",
     # ツールリスト
     "TOOLS",
     # ユーティリティ関数
