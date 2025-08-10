@@ -336,7 +336,7 @@ def tmdb_movie_search(query: str, language_code: Optional[str] = None) -> str:
     
     try:
         res = requests.get(url, params=params).json()
-        results = res.get("results", [])[:5]
+        results = res.get("results", [])[:20]
         
         if not results:
             return f"「{query}」に一致する映画が見つかりませんでした。より具体的なタイトルやキーワードを試してください。（検索言語: {lang_code}）"
@@ -422,7 +422,7 @@ def tmdb_tv_search(query: str, language_code: Optional[str] = None) -> str:
     
     try:
         res = requests.get(url, params=params).json()
-        results = res.get("results", [])[:5]
+        results = res.get("results", [])[:20]
         
         if not results:
             return f"「{query}」に一致するTV番組が見つかりませんでした。より具体的なタイトルやキーワードを試してください。（検索言語: {lang_code}）"
@@ -467,7 +467,7 @@ def tmdb_multi_search(query: str, language_code: Optional[str] = None) -> str:
     
     try:
         res = requests.get(url, params=params).json()
-        results = res.get("results", [])[:6]
+        results = res.get("results", [])[:20]
         
         if not results:
             return f"「{query}」に一致するコンテンツが見つかりませんでした。より具体的なタイトルやキーワードを試してください。（検索言語: {lang_code}）"
