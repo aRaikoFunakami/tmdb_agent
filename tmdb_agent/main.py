@@ -218,7 +218,7 @@ def run_auto_tests(selected_tests=None, debug_mode=False):
     # OpenAI LLMを作成
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.1)  # 温度を下げて一貫性を向上
+    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)  # 温度を下げて一貫性を向上
 
     # エージェントを作成
     agent = create_tmdb_agent(llm, verbose=True)
@@ -354,7 +354,7 @@ def run_chat_mode():
     from langchain_openai import ChatOpenAI
     
     try:
-        llm = ChatOpenAI(model="gpt-5-mini", temperature=0.1)
+        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
     except Exception as e:
         print(f"❌ LLMの初期化に失敗しました: {e}")
         print("OPENAI_API_KEYが設定されているか確認してください。")
