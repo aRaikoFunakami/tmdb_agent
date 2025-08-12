@@ -4,7 +4,7 @@ TMDB検索エージェント統合実装
 TMDB APIを使った多言語対応のコンテンツ検索エージェント。
 """
 
-from langchain.agents import create_react_agent, AgentExecutor
+from langchain.agents import create_react_agent, AgentExecutor, create_openai_functions_agent
 from langchain import hub
 from langchain_core.prompts import PromptTemplate
 from langchain_core.language_models.base import BaseLanguageModel
@@ -143,9 +143,15 @@ class TMDBSearchAgent:
 
         # エージェントとエグゼキューターを初期化
         self.tools = TOOLS  # 新しい@toolデコレーター定義のツールリストを使用
-        
-        # ReActエージェントの場合は、LLMにツールをバインドせずに直接渡す
-        self.agent = create_react_agent(self.llm, self.tools, self.prompt_template)
+
+        # LLMの種類に応じてエージェントを選択
+        if "openai" in str(type(llm)).lower():
+            print(f"Using create_openai_functions_agent for {str(type(llm))}")
+            self.agent = create_openai_functions_agent(self.llm, self.tools, self.prompt_template)
+        else:
+            print(f"Using create_react_agent for {str(type(llm))}")
+            self.agent = create_react_agent(self.llm, self.tools, self.prompt_template)
+
         self.agent_executor = AgentExecutor(
             agent=self.agent,
             tools=self.tools,
