@@ -226,6 +226,36 @@ class MultiRecommendationInput(BaseModel):
         pattern="^[a-z]{2}-[A-Z]{2}$"
     )
 
+class MultiTitleRecommendationInput(BaseModel):
+    """複数タイトル推薦検索の入力パラメータ"""
+    titles: list[str] = Field(
+        description="推薦を取得したい映画またはTV番組のタイトルリスト（複数指定可能）",
+        min_items=1,
+        max_items=10
+    )
+    content_type: Optional[str] = Field(
+        default="both",
+        description="取得するコンテンツタイプ（both: 映画とTV両方、movie: 映画のみ、tv: TVのみ）",
+        pattern="^(both|movie|tv)$"
+    )
+    final_limit: Optional[int] = Field(
+        default=5,
+        description="最終的に取得する推薦作品数（最大20）",
+        ge=1,
+        le=20
+    )
+    per_title_limit: Optional[int] = Field(
+        default=10,
+        description="各タイトルから取得する推薦数（最大20、デフォルト10）",
+        ge=1,
+        le=20
+    )
+    language_code: Optional[str] = Field(
+        default=None,
+        description="検索言語コード（例: ja-JP, en-US）。指定しない場合は自動検出",
+        pattern="^[a-z]{2}-[A-Z]{2}$"
+    )
+
 
 # 言語コードマッピング（ISO 639-1 + ISO 3166-1）- 共通定義
 SUPPORTED_LANGUAGES = {
@@ -1009,6 +1039,119 @@ def _get_tv_recommendations(title: str, language_code: str, limit: int) -> list:
         return []
 
 
+@tool("tmdb_multi_title_recommendation", args_schema=MultiTitleRecommendationInput)
+def tmdb_multi_title_recommendation(titles: list[str], content_type: str = "both", final_limit: int = 5, per_title_limit: int = 10, language_code: Optional[str] = None) -> str:
+    """複数の映画またはTV番組のタイトルを元に、TMDBの推薦APIを使って類似作品を統合的に取得します。
+    
+    各タイトルから推薦を取得し、重複を除去した後、評価順にソートして最終的な推薦リストを作成します。
+    
+    Args:
+        titles: 推薦を取得したい映画またはTV番組のタイトルリスト
+        content_type: 取得するコンテンツタイプ（both: 映画とTV両方、movie: 映画のみ、tv: TVのみ）
+        final_limit: 最終的に取得する推薦作品数（最大20、デフォルト5）
+        per_title_limit: 各タイトルから取得する推薦数（最大20、デフォルト10）
+        language_code: 結果の言語コード（例: ja-JP, en-US）。自動検出の場合はNone
+    
+    Returns:
+        統合された推薦作品のリスト（タイトル、公開日、評価、概要を含む）
+    """
+    if not TMDB_API_KEY:
+        return "エラー: TMDB_API_KEYが設定されていません。"
+    
+    if not titles:
+        return "エラー: タイトルが指定されていません。"
+    
+    # 言語コードの決定
+    if language_code is None:
+        try:
+            # 最初のタイトルを使って言語を検出
+            detected_lang = detect(titles[0])
+            language_code = SUPPORTED_LANGUAGES.get(detected_lang, "ja-JP")
+        except (LangDetectException, KeyError):
+            language_code = "ja-JP"
+    
+    try:
+        all_recommendations = []
+        processed_titles = []
+        
+        # 各タイトルから推薦を取得
+        for title in titles:
+            title_recommendations = []
+            
+            # コンテンツタイプに応じて検索とレコメンデーション取得を実行
+            if content_type in ["both", "movie"]:
+                movie_recs = _get_movie_recommendations(title, language_code, per_title_limit)
+                title_recommendations.extend(movie_recs)
+            
+            if content_type in ["both", "tv"]:
+                tv_recs = _get_tv_recommendations(title, language_code, per_title_limit)
+                title_recommendations.extend(tv_recs)
+            
+            if title_recommendations:
+                processed_titles.append(title)
+                all_recommendations.extend(title_recommendations)
+        
+        if not all_recommendations:
+            return f"指定されたタイトル {titles} に対する推薦作品が見つかりませんでした。"
+        
+        # 重複除去（TMDBのIDを基準に）
+        unique_recommendations = {}
+        for rec in all_recommendations:
+            tmdb_id = rec.get('id')
+            media_type = rec.get('media_type', 'unknown')
+            # IDとメディアタイプの組み合わせをキーとして重複除去
+            key = f"{tmdb_id}_{media_type}"
+            
+            if key not in unique_recommendations:
+                unique_recommendations[key] = rec
+            else:
+                # 既存のものより評価が高い場合は置き換え
+                if rec.get('vote_average', 0) > unique_recommendations[key].get('vote_average', 0):
+                    unique_recommendations[key] = rec
+        
+        # 評価順にソートし、指定された制限数まで取得
+        sorted_recommendations = sorted(
+            unique_recommendations.values(), 
+            key=lambda x: x.get('vote_average', 0), 
+            reverse=True
+        )
+        final_recommendations = sorted_recommendations[:final_limit]
+        
+        # 結果をフォーマット
+        output = []
+        output.append(f"推薦検索基準タイトル: {', '.join(processed_titles)}")
+        output.append(f"検索タイプ: {content_type}")
+        output.append(f"各タイトルあたりの取得数: {per_title_limit}")
+        output.append(f"総推薦候補数（重複除去前）: {len(all_recommendations)}")
+        output.append(f"重複除去後の候補数: {len(unique_recommendations)}")
+        output.append(f"最終取得件数: {len(final_recommendations)}")
+        output.append("")
+        
+        for i, rec in enumerate(final_recommendations, 1):
+            media_type = rec.get('media_type', 'unknown')
+            if media_type == 'movie':
+                output.append(f"{i}. movie_title: {rec.get('title', 'N/A')}")
+                output.append(f"   release_date: {rec.get('release_date', 'N/A')}")
+            elif media_type == 'tv':
+                output.append(f"{i}. tv_show_title: {rec.get('name', 'N/A')}")
+                output.append(f"   first_air_date: {rec.get('first_air_date', 'N/A')}")
+            else:
+                output.append(f"{i}. title: {rec.get('title') or rec.get('name', 'N/A')}")
+            
+            output.append(f"   vote_average: {rec.get('vote_average', 0)}")
+            output.append(f"   tmdb_id: {rec.get('id', 'N/A')}")
+            overview = rec.get('overview', '')
+            if overview:
+                output.append(f"   overview: {overview[:150]}...")
+            output.append("")
+        
+        output.append(f"language: {language_code}")
+        return "\n".join(output)
+        
+    except Exception as e:
+        return f"複数タイトル推薦作品取得中にエラーが発生しました: {str(e)}"
+
+
 
 @tool("web_search_supplement", args_schema=WebSearchInput)
 def web_search_supplement(query: str) -> str:
@@ -1610,6 +1753,7 @@ TOOLS = [
     tmdb_popular_people,
     tmdb_get_popular_people,
     tmdb_multi_recommendation,
+    tmdb_multi_title_recommendation,
     tmdb_trending_all,
     tmdb_trending_movies,
     tmdb_trending_tv,
@@ -1625,8 +1769,8 @@ TOOLS = [
 ]
 
 # プロンプト用のツール説明文
-TOOLS_TEXT = "tmdb_movie_search: 映画の具体的なタイトルで検索\ntmdb_tv_search: TV番組の具体的なタイトルで検索\ntmdb_person_search: 具体的な人名で検索\ntmdb_multi_search: 映画・TV・人物を横断検索\ntmdb_movie_credits_search: 映画の詳細なクレジット情報を取得（タイトル検索）\ntmdb_tv_credits_search: TV番組の詳細なクレジット情報を取得（タイトル検索）\ntmdb_credits_search_by_id: 映画IDまたはTV番組IDを直接指定してクレジット情報を取得\ntmdb_popular_people: 人気順で人物リストを取得（ページ指定可能）\ntmdb_get_popular_people: 人気順で人物リストを取得（引数なし：Action Input は空で）\ntmdb_multi_recommendation: 映画・TV番組の推薦作品を取得（タイトル、コンテンツタイプ、取得数を指定）\ntmdb_trending_all: 全コンテンツのトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_movies: 映画のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_tv: TV番組のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_people: 人物のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_get_trending_all: 全コンテンツの日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_movies: 映画の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_tv: TV番組の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_people: 人物の日別トレンドを取得（引数なし：Action Input は空で）\nweb_search_supplement: TMDBで見つからない情報をWebから検索して補完\ntheme_song_search: 映画・アニメ・ドラマの主題歌・楽曲・歌手情報をWebから検索\ntmdb_company_search: 制作会社・配給会社・プロダクション会社を名前で検索してIDを取得\ntmdb_movies_by_company: 制作会社IDに基づいて映画を検索（複数会社のOR検索対応）"
-TOOL_NAMES = "tmdb_movie_search, tmdb_tv_search, tmdb_person_search, tmdb_multi_search, tmdb_movie_credits_search, tmdb_tv_credits_search, tmdb_credits_search_by_id, tmdb_popular_people, tmdb_get_popular_people, tmdb_multi_recommendation, tmdb_trending_all, tmdb_trending_movies, tmdb_trending_tv, tmdb_trending_people, tmdb_get_trending_all, tmdb_get_trending_movies, tmdb_get_trending_tv, tmdb_get_trending_people, web_search_supplement, theme_song_search, tmdb_company_search, tmdb_movies_by_company"
+TOOLS_TEXT = "tmdb_movie_search: 映画の具体的なタイトルで検索\ntmdb_tv_search: TV番組の具体的なタイトルで検索\ntmdb_person_search: 具体的な人名で検索\ntmdb_multi_search: 映画・TV・人物を横断検索\ntmdb_movie_credits_search: 映画の詳細なクレジット情報を取得（タイトル検索）\ntmdb_tv_credits_search: TV番組の詳細なクレジット情報を取得（タイトル検索）\ntmdb_credits_search_by_id: 映画IDまたはTV番組IDを直接指定してクレジット情報を取得\ntmdb_popular_people: 人気順で人物リストを取得（ページ指定可能）\ntmdb_get_popular_people: 人気順で人物リストを取得（引数なし：Action Input は空で）\ntmdb_multi_recommendation: 映画・TV番組の推薦作品を取得（タイトル、コンテンツタイプ、取得数を指定）\ntmdb_multi_title_recommendation: 複数タイトルから統合的に推薦作品を取得（重複除去・評価順ソート）\ntmdb_trending_all: 全コンテンツのトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_movies: 映画のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_tv: TV番組のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_trending_people: 人物のトレンド取得（time_window: day=今日・直近, week=今週・最近）\ntmdb_get_trending_all: 全コンテンツの日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_movies: 映画の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_tv: TV番組の日別トレンドを取得（引数なし：Action Input は空で）\ntmdb_get_trending_people: 人物の日別トレンドを取得（引数なし：Action Input は空で）\nweb_search_supplement: TMDBで見つからない情報をWebから検索して補完\ntheme_song_search: 映画・アニメ・ドラマの主題歌・楽曲・歌手情報をWebから検索\ntmdb_company_search: 制作会社・配給会社・プロダクション会社を名前で検索してIDを取得\ntmdb_movies_by_company: 制作会社IDに基づいて映画を検索（複数会社のOR検索対応）"
+TOOL_NAMES = "tmdb_movie_search, tmdb_tv_search, tmdb_person_search, tmdb_multi_search, tmdb_movie_credits_search, tmdb_tv_credits_search, tmdb_credits_search_by_id, tmdb_popular_people, tmdb_get_popular_people, tmdb_multi_recommendation, tmdb_multi_title_recommendation, tmdb_trending_all, tmdb_trending_movies, tmdb_trending_tv, tmdb_trending_people, tmdb_get_trending_all, tmdb_get_trending_movies, tmdb_get_trending_tv, tmdb_get_trending_people, web_search_supplement, theme_song_search, tmdb_company_search, tmdb_movies_by_company"
 
 
 # エクスポート用の関数リスト
@@ -1642,6 +1786,7 @@ __all__ = [
     "tmdb_popular_people",
     "tmdb_get_popular_people",
     "tmdb_multi_recommendation",
+    "tmdb_multi_title_recommendation",
     "tmdb_trending_all",
     "tmdb_trending_movies",
     "tmdb_trending_tv",
