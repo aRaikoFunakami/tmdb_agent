@@ -52,7 +52,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         # CineBotインスタンスを作成
-        cine_bot = create_cine_bot(verbose=False)
+        cine_bot = create_cine_bot(verbose=True)
         
         # 入力ストリームを作成
         input_queue = asyncio.Queue()

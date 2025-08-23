@@ -99,7 +99,8 @@ class CineBot:
             model=model,
             api_key=api_key,
             instructions=instructions,
-            tools=self.tools
+            tools=self.tools,
+            verbose=verbose
         )
     
     def _create_default_instructions(self) -> str:

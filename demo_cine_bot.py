@@ -24,7 +24,9 @@ async def demo_text_input():
     print("=" * 50)
     
     # CineBotを作成
+    print("🔧 Creating CineBot with verbose logging enabled...")
     bot = create_cine_bot(verbose=True)
+    print("✅ CineBot created successfully!\n")
     
     # テスト質問リスト
     test_questions = [

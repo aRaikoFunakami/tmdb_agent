@@ -12,6 +12,7 @@ from langchain_core._api import beta
 from langchain_core.utils import secret_from_env
 
 from pydantic import BaseModel, Field, SecretStr, PrivateAttr
+from colorama import init, Fore, Style
 
 import os
 
@@ -21,6 +22,8 @@ if os.getenv("OPENAI_VOICE_TEXT_MODE") is None:
 else:
     DEBUG_BY_WSCAT = True
     print("OPENAI_VOICE_TEXT_MODE is set. Defaulting to True.")
+
+init(autoreset=True)
 
 DEFAULT_MODEL = "gpt-4o-mini-realtime-preview"
 DEFAULT_URL = "wss://api.openai.com/v1/realtime"
@@ -140,6 +143,7 @@ class VoiceToolExecutor(BaseModel):
     """
 
     tools_by_name: dict[str, BaseTool]
+    verbose: bool = False
     _trigger_future: asyncio.Future = PrivateAttr(default_factory=asyncio.Future)
     _lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
 
@@ -180,7 +184,19 @@ class VoiceToolExecutor(BaseModel):
             )
 
         async def run_tool() -> dict:
+            if self.verbose:
+                print(Fore.RED + f"   🔧 [Tool Call] : {tool_call['name']}")
+                print(Fore.RED + f"   📝 Arguments: {json.dumps(args, ensure_ascii=False, indent=4)}")
+                print(Fore.RED + "   ⏰ Executing...")
+            
             result = await tool.ainvoke(args)
+            
+            if self.verbose:
+                print(Fore.RED + f"   📊 Result Type: {type(result).__name__}")
+                # print(Fore.RED + f"   ✅ Result: {str(result)[:200]}{'...' if len(str(result)) > 200 else ''}")
+                print(Fore.RED + f"   ✅ Result: {str(result)}")
+
+            
             try:
                 result_str = json.dumps(result)
             except TypeError:
@@ -250,6 +266,8 @@ class OpenAIVoiceReactAgent(BaseModel):
     instructions: str | None = None
     tools: list[BaseTool] | None = None
     url: str = Field(default=DEFAULT_URL)
+    verbose: bool = False
+    verbose: bool = False  # ログ出力を制御するフラグ
 
     async def aconnect(
         self,
@@ -265,12 +283,8 @@ class OpenAIVoiceReactAgent(BaseModel):
             Callback to receive output events from the model. Usually sends response.audio.delta events to the speaker.
 
         """
-        # formatted_tools: list[BaseTool] = [
-        #     tool if isinstance(tool, BaseTool) else tool_converter.wr(tool)  # type: ignore
-        #     for tool in self.tools or []
-        # ]
         tools_by_name = {tool.name: tool for tool in self.tools or []}
-        tool_executor = VoiceToolExecutor(tools_by_name=tools_by_name)
+        tool_executor = VoiceToolExecutor(tools_by_name=tools_by_name, verbose=self.verbose)
 
         async with connect(
             model=self.model, api_key=self.api_key.get_secret_value(), url=self.url
