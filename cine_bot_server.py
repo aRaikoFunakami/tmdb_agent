@@ -18,6 +18,7 @@ from starlette.applications import Starlette
 from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.responses import JSONResponse, HTMLResponse
 from starlette.routing import Route, WebSocketRoute
+from starlette.staticfiles import StaticFiles
 import uvicorn
 
 # プロジェクトルートをPythonパスに追加
@@ -153,94 +154,20 @@ async def health_check(request):
     })
 
 
-async def index(request):
-    """ルートエンドポイント - 簡単なテストページ"""
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>CineBot WebSocket Server</title>
-        <meta charset="utf-8">
-    </head>
-    <body>
-        <h1>🎬 CineBot WebSocket Server</h1>
-        <p>音声対応映画・TV番組レコメンデーションボット</p>
-        
-        <div id="status">接続していません</div>
-        <div>
-            <input type="text" id="messageInput" placeholder="メッセージを入力..." style="width: 300px;">
-            <button onclick="sendMessage()">送信</button>
-        </div>
-        <div id="messages" style="border: 1px solid #ccc; height: 300px; overflow-y: scroll; margin-top: 10px; padding: 10px;"></div>
-        
-        <script>
-            const ws = new WebSocket('ws://localhost:8000/ws');
-            const status = document.getElementById('status');
-            const messages = document.getElementById('messages');
-            const messageInput = document.getElementById('messageInput');
-            
-            ws.onopen = function(event) {
-                status.textContent = '✅ 接続済み';
-                status.style.color = 'green';
-            };
-            
-            ws.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                const msgDiv = document.createElement('div');
-                msgDiv.innerHTML = `<strong>${data.type}:</strong> ${JSON.stringify(data, null, 2)}`;
-                messages.appendChild(msgDiv);
-                messages.scrollTop = messages.scrollHeight;
-            };
-            
-            ws.onclose = function(event) {
-                status.textContent = '❌ 切断済み';
-                status.style.color = 'red';
-            };
-            
-            ws.onerror = function(error) {
-                status.textContent = '❌ エラー';
-                status.style.color = 'red';
-                console.error('WebSocket error:', error);
-            };
-            
-            function sendMessage() {
-                const message = messageInput.value;
-                if (message.trim()) {
-                    // ユーザーメッセージとして送信
-                    const userMessage = {
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "message",
-                            "role": "user",
-                            "content": [{"type": "input_text", "text": message}]
-                        }
-                    };
-                    ws.send(JSON.stringify(userMessage));
-                    messageInput.value = '';
-                }
-            }
-            
-            messageInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    sendMessage();
-                }
-            });
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(html_content)
-
-
+async def homepage(request):
+    with open("static/index.html") as f:
+        html = f.read()
+        return HTMLResponse(html)
+    
 # Starletteアプリケーションを作成
 app = Starlette(
     routes=[
-        Route('/', index),
+        Route('/', homepage),
         Route('/health', health_check),
         WebSocketRoute('/ws', websocket_endpoint),
     ]
 )
-
+app.mount("/", StaticFiles(directory="static"), name="static")
 
 def check_environment():
     """環境設定の確認"""
