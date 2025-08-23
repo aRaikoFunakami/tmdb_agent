@@ -13,4 +13,13 @@ dependencies = [
     "langdetect>=1.0.9",
     "sudachidict-core>=20250515",
     "sudachipy>=0.6.10",
+    "starlette>=0.27.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0",
+    "websockets>=13.0",
 ]
+
+[project.scripts]
+cine-bot-server = "cine_bot_server:main"
+cine-bot-client = "cine_bot_client:main"
+cine-bot-demo = "demo_cine_bot:main"
