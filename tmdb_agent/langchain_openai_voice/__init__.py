@@ -312,6 +312,16 @@ class OpenAIVoiceReactAgent(BaseModel):
                         },
                         "tools": tool_defs,
                         "voice": "sage",
+                        "input_audio_format": "pcm16",
+                        "output_audio_format": "pcm16",
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": 0.5,
+                            "prefix_padding_ms": 300,
+                            "silence_duration_ms": 500
+                        },
+                        "temperature": 0.8,
+                        "max_response_output_tokens": 4096
                     },
                 }
             )
