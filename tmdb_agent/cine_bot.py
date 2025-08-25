@@ -36,6 +36,7 @@ try:
         get_available_tools,
     )
     from .video_search import VideoSearch
+    from .location_search import LocationSearch
 except ImportError:
     # 直接実行される場合（絶対インポート）
     from tools import (
@@ -47,6 +48,7 @@ except ImportError:
         get_available_tools,
     )
     from video_search import VideoSearch
+    from location_search import LocationSearch
 
 
 class CineBot:
@@ -90,7 +92,7 @@ class CineBot:
         self.verbose = verbose
         
         # CineBot専用のツールリストを作成
-        self.tools = TOOLS + [VideoSearch()]
+        self.tools = TOOLS + [VideoSearch(), LocationSearch()]
 
         # デフォルトのインストラクション
         if instructions is None:
@@ -190,6 +192,14 @@ class CineBot:
   - service: "youtube" または "videocenter"
   - input: 検索クエリ文字列
 
+### search_location_content ツール
+- **用途**: 位置情報・POI・住所をベースにしたおすすめコンテンツの検索
+- **呼び出し条件**: ユーザーが場所・地域・観光地等の情報を求めた場合
+- **パラメーター**:
+  - location: 場所名、POI、住所、地名
+  - content_type: "attractions"(観光地), "restaurants"(レストラン), "events"(イベント), "culture"(文化), "nature"(自然), "shopping"(ショッピング), "nightlife"(夜遊び), "general"(全般)
+  - language: 言語設定（"auto"で自動検出）
+
 ## 📋 EXAMPLE INTERACTIONS
 
 ```
@@ -204,6 +214,15 @@ class CineBot:
 
 ユーザー: "アベンジャーズを観たい"
 システム: search_videos(service="videocenter", input="アベンジャーズ") → [検索実行]
+
+ユーザー: "東京のおすすめ観光地を教えて"
+システム: search_location_content(location="東京", content_type="attractions") → [観光地情報提供]
+
+ユーザー: "渋谷でおいしいレストランを探して"
+システム: search_location_content(location="渋谷", content_type="restaurants") → [レストラン情報提供]
+
+ユーザー: "京都の文化的な場所を知りたい"
+システム: search_location_content(location="京都", content_type="culture") → [文化施設情報提供]
 ```
 
 ## 🌐 MULTILINGUAL SUPPORT & LANGUAGE PRIORITY
@@ -231,6 +250,7 @@ class CineBot:
 2. 確実でない情報は必ずツールで確認
 3. ユーザーの好みを会話全体で記憶
 4. 関数呼び出し後は簡潔に結果を伝える
+5. コンテンツをリコメンドする場合は、その理由を簡潔にに説明する
 
 あなたは映画とTV番組の最高の案内人として、ユーザーにとって最適なエンターテインメント体験を提供することが使命です。"""
     
