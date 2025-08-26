@@ -175,18 +175,7 @@ class LocationSearch(BaseTool):
 
 
             # --- キャッシュメタ情報生成 ---
-            meta = {
-                "locale": language,
-                "region": "JP",  # 必要に応じて拡張
-                "user": "default",  # セッションやユーザーIDで拡張可
-                "provider": "tavily",
-                "version": "1.0",
-                "param_hash": param_hash({
-                    "location": location,
-                    "content_type": content_type,
-                    "language": language
-                })
-            }
+            meta = {}
             logging.info(f"Cache meta: {meta}")
 
             # --- キャッシュ検索 ---
