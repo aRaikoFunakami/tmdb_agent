@@ -8,6 +8,10 @@ from langchain.tools import BaseTool
 from langchain_tavily import TavilySearch
 from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
+from typing import List
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+
 
 
 class LocationSearchInput(BaseModel):
@@ -24,6 +28,17 @@ class LocationSearchInput(BaseModel):
     )
 
 
+class MediaItem(BaseModel):
+    # Title of a well-known film/TV/series/anime
+    title: str = Field(description="Official title of the work")
+    # 1-2 sentence plain description (no spoilers)
+    description: str = Field(description="Short description of the work")
+
+class TopMedia(BaseModel):
+    # Exactly 3 items, ordered by global notoriety (most famous first)
+    items: List[MediaItem] = Field(min_length=3, max_length=3, description="Top 3 by fame")
+
+
 class LocationSearch(BaseTool):
     name: str = "search_location_content"
     description: str = (
@@ -35,10 +50,12 @@ class LocationSearch(BaseTool):
     return_direct: bool = True
 
     _tavily_search: TavilySearch = PrivateAttr()
+    _extract_llm: ChatOpenAI = PrivateAttr()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._tavily_search = TavilySearch(max_results=10, topic="general", include_images=False, search_depth="advanced")
+        self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 
     def _detect_language(self, text: str) -> str:
@@ -50,6 +67,25 @@ class LocationSearch(BaseTool):
             return  "ja"
         except LangDetectException:
             return "en"
+
+    def _generate_response(self, videos: list) -> dict:
+        """Generate a standardized response for location-based content search."""
+
+        return {
+            "type": "tools.location_search",
+            "description": """
+                This JSON contains items intended to be displayed in the client application
+                using components such as GroupButton. Each item includes the necessary
+                fields and instructions for proper rendering and interaction.
+            """,
+            "return_direct": True,
+            "selection": {
+                "videos": [{
+                    "title": video.get("title"),
+                    "description": video.get("description")
+                } for video in videos]
+            },
+        }
     
     def _build_search_query(self, location: str, content_type: str, language: str) -> str:
         """Build an optimized search query for location-based movie/TV content."""
@@ -81,6 +117,31 @@ class LocationSearch(BaseTool):
         return query
 
 
+    def _extract_top_media(self, raw_results: list, language: str) -> dict:
+        """Use LLM to extract Top-3 famous works (film/TV/drama/anime) as strict JSON."""
+
+        # Bind Pydantic schema to enforce strict JSON
+        parser_llm = self._extract_llm.with_structured_output(TopMedia)
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You are a precise extractor of famous audiovisual works. "
+             "From the provided web search corpus, identify only works that are FILMS, TV series, live-action dramas, or ANIME. "
+             "Exclude people, characters, episodes, songs, books (unless widely known as a film/TV/anime adaptation), news articles, or venues. "
+             "Return strictly the JSON that conforms to the provided schema. "
+             "Order by global fame/popularity (most famous first). "
+             "Keep descriptions concise (1-2 sentences), spoiler-free, and factual."),
+            ("system", "Write descriptions in Japanese." if language == "ja" else "Write descriptions in English."),
+            ("human",
+             "Tavily's output to analyze:\n\n{input}\n\n"
+             "Extract exactly the Top 3 most globally famous works (films/TV/dramas/anime) present in the corpus "
+             "and return ONLY the strict JSON for the schema.")
+        ])
+
+        result = (prompt | parser_llm).invoke({"input": raw_results})
+        # Convert to plain dict for JSON serialization by _run()
+        return result.model_dump(mode="json")
+
     def _handle_error(self, error: Exception) -> dict:
         """Handle errors and return a consistent error response."""
         error_message = f"Error in location content search: {str(error)}"
@@ -109,15 +170,25 @@ class LocationSearch(BaseTool):
             # Tavilyで検索実行
             search_results = await self._tavily_search.ainvoke({"query": search_query})
 
-            # レスポンス生成
-            # resultsが辞書の場合、results部分を取得
+            # Format: pick Tavily "results" list; handle list fallback
             if isinstance(search_results, dict):
-                response = search_results.get("results", [])
+                raw_results = search_results.get("results", [])
             else:
-                response = search_results
-            
+                raw_results = search_results
+
+            # Use LLM to extract Top-3 famous works (title + description) as strict JSON
+            try:
+                videos = self._extract_top_media(raw_results, language)
+            except Exception as extract_err:
+                logging.exception(f"LLM extraction failed: {extract_err}")
+                # Fallback to empty structure with correct schema (will be validated by caller if needed)
+                videos = {"items": []}
+
+            logging.info(f"videos: {videos}")
+
+            response = self._generate_response(videos.get("items", []))
             logging.info(f"Response: {response}")
-            
+
             return response
             
         except Exception as e:
@@ -137,6 +208,7 @@ class LocationSearch(BaseTool):
 
 # Ensure proper module usage
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     # Example usage for movie/TV content search
     tool = LocationSearch()
     
