@@ -1,3 +1,7 @@
+try:
+    from .vectordb_cache import VectorDBCache, param_hash
+except ImportError:
+    from vectordb_cache import VectorDBCache, param_hash
 import json
 import logging
 from typing import Type
@@ -51,11 +55,13 @@ class LocationSearch(BaseTool):
 
     _tavily_search: TavilySearch = PrivateAttr()
     _extract_llm: ChatOpenAI = PrivateAttr()
+    _vectordb_cache: VectorDBCache = PrivateAttr()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._tavily_search = TavilySearch(max_results=10, topic="general", include_images=False, search_depth="advanced")
         self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        self._vectordb_cache = VectorDBCache()
 
 
     def _detect_language(self, text: str) -> str:
@@ -149,24 +155,48 @@ class LocationSearch(BaseTool):
         return {"error": error_message}
 
     async def _arun(self, location: str, content_type: str = "multi", language: str = "auto"):
-        """Asynchronous movie/TV location content search."""
+        """Asynchronous movie/TV location content search with vector cache."""
         try:
             # 自動言語検出
             if language == "auto":
                 language = self._detect_language(location)
-            
+
             # サポートされているコンテンツタイプの検証
             supported_types = ["movies", "tv_shows", "multi"]
             if content_type not in supported_types:
                 logging.warning(f"Unsupported content type: {content_type}. Using 'multi' instead.")
                 content_type = "multi"
-            
+
             logging.info(f"Location = {location}, Content Type = {content_type}, Language = {language}")
-            
+
             # 検索クエリを構築
             search_query = self._build_search_query(location, content_type, language)
             logging.info(f"Search Query = {search_query}")
-            
+
+
+            # --- キャッシュメタ情報生成 ---
+            meta = {
+                "locale": language,
+                "region": "JP",  # 必要に応じて拡張
+                "user": "default",  # セッションやユーザーIDで拡張可
+                "provider": "tavily",
+                "version": "1.0",
+                "param_hash": param_hash({
+                    "location": location,
+                    "content_type": content_type,
+                    "language": language
+                })
+            }
+            logging.info(f"Cache meta: {meta}")
+
+            # --- キャッシュ検索 ---
+            cached, hit, score = self._vectordb_cache.search_with_score(search_query, meta)
+            if hit:
+                logging.info(f"VectorDBCache HIT (score={score:.4f})")
+                return cached
+            else:
+                logging.info(f"VectorDBCache MISS (score={score:.4f})")
+
             # Tavilyで検索実行
             search_results = await self._tavily_search.ainvoke({"query": search_query})
 
@@ -189,8 +219,11 @@ class LocationSearch(BaseTool):
             response = self._generate_response(videos.get("items", []))
             logging.info(f"Response: {response}")
 
+            # --- キャッシュ保存 ---
+            self._vectordb_cache.add(search_query, meta, response)
+
             return response
-            
+
         except Exception as e:
             return self._handle_error(e)
 
@@ -209,19 +242,18 @@ class LocationSearch(BaseTool):
 # Ensure proper module usage
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    # Example usage for movie/TV content search
     tool = LocationSearch()
-    
-    # Test different types of movie/TV searches
+    print("\n--- LocationSearch PoC test ---")
     test_cases = [
-        ("温泉", "movies", "ja"),
+        ("草津温泉", "movies", "ja"),
+        ("渋谷", "multi", "ja"),
+        ("京都", "tv_shows", "auto"),
+        ("Tokyo Tower", "movies", "en"),
     ]
-    
     for location, content_type, language in test_cases:
-        print(f"\n=== Testing {content_type} search for {location} (language: {language}) ===")
+        print(f"\n=== {content_type} | {location} | {language} ===")
         try:
             result = tool._run(location, content_type, language)
-            #print(result[:500] + "..." if len(result) > 500 else result)
             print(result)
         except Exception as e:
             print(f"Error: {e}")
