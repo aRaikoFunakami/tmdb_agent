@@ -16,7 +16,8 @@ from typing import List
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 
-
+# for PoC
+local_vectordb_cache = VectorDBCache()
 
 class LocationSearchInput(BaseModel):
     location: str = Field(
@@ -61,7 +62,7 @@ class LocationSearch(BaseTool):
         super().__init__(**kwargs)
         self._tavily_search = TavilySearch(max_results=10, topic="general", include_images=False, search_depth="advanced")
         self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        self._vectordb_cache = VectorDBCache()
+        self._vectordb_cache = local_vectordb_cache
 
 
     def _detect_language(self, text: str) -> str:
