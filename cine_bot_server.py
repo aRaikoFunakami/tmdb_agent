@@ -70,7 +70,7 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 while True:
                     message = await websocket.receive_text()
-                    logger.info(f"Received message from {websocket.client}: {message[:100]}...")
+                    logger.debug(f"Received message from {websocket.client}: {message[:100]}")
                     await input_queue.put(message)
             except WebSocketDisconnect:
                 logger.info(f"Client {websocket.client} disconnected")

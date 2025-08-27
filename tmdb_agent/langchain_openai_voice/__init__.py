@@ -379,10 +379,10 @@ class OpenAIVoiceReactAgent(BaseModel):
                             event = RESPONSE_CREATE_TEXT
                         else:
                             event = RESPONSE_CREATE_AUDIO
+                        logging.info("Sending response.create for text input: %s", json.dumps(event, indent=2, ensure_ascii=False))
+                        await model_send(event)
                     else: 
-                        event = RESPONSE_CREATE_TEXT
-                    logging.info("Sending response.create for text input: %s", json.dumps(event, indent=2, ensure_ascii=False))
-                    await model_send(event)
+                        logging.info("Don't send response.create if role is system")
 
                 elif stream_key == "tool_outputs":
                     # Returns the results of the tool execution to both model + client
