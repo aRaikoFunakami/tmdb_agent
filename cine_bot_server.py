@@ -109,7 +109,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 else:
                     logger.info(f"Cannot send to {websocket.client}: connection not open")
             except Exception as e:
-                logger.error(f"Error sending chunk: {e}")
+                logger.error(f"Error sending chunk: {e}: {chunk}")
         
         # メッセージ受信タスクを開始
         receive_task = asyncio.create_task(receive_messages())

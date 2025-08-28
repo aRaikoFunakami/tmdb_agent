@@ -86,6 +86,15 @@ def text_to_realtime_api_json_as_role(role: str, data_raw: str):
     #logging.info(f"Converted text to Realtime API JSON: {data}")
     return data
 
+def create_intermediate_response(message: str):
+    print(Fore.RED + f"create_intermediate_response: {message}")
+    """中間応答メッセージを作成"""
+    return {
+        "type": "event.notification",
+        "event_id": message,
+    }
+ 
+
 
 @asynccontextmanager
 async def connect(*, api_key: str, model: str, url: str) -> AsyncGenerator[
@@ -164,7 +173,7 @@ class VoiceToolExecutor(BaseModel):
 
             self._trigger_future.set_result(tool_call)
 
-    async def _create_tool_call_task(self, tool_call: dict) -> asyncio.Task:
+    async def _create_tool_call_task(self, tool_call: dict, send_output_chunk: Callable) -> asyncio.Task:
         """
         実際にツールを呼び出すためのタスクを作成し、結果をまとめて返す。
         """
@@ -196,6 +205,9 @@ class VoiceToolExecutor(BaseModel):
                 # print(Fore.RED + f"   ✅ Result: {str(result)[:200]}{'...' if len(str(result)) > 200 else ''}")
                 print(Fore.RED + f"   ✅ Result: {str(result)}")
 
+            # クライアントに中間応答を送信
+            intermediate_response = json.dumps(create_intermediate_response("run_tool"), ensure_ascii=False, indent=4)
+            await send_output_chunk(intermediate_response)
             
             try:
                 result_str = json.dumps(result)
@@ -215,7 +227,7 @@ class VoiceToolExecutor(BaseModel):
         task = asyncio.create_task(run_tool())
         return task
 
-    async def output_iterator(self) -> AsyncIterator[dict]:
+    async def output_iterator(self, send_output_chunk: Callable = None) -> AsyncIterator[dict]:
         """
         Stream of tool execution results
         """
@@ -234,7 +246,7 @@ class VoiceToolExecutor(BaseModel):
                     tasks.add(trigger_task)
                     tool_call = task.result()
                     try:
-                        new_task = await self._create_tool_call_task(tool_call)
+                        new_task = await self._create_tool_call_task(tool_call, send_output_chunk)
                         tasks.add(new_task)
                     except ValueError as e:
                         yield {
@@ -347,7 +359,7 @@ class OpenAIVoiceReactAgent(BaseModel):
             async for stream_key, data_raw in amerge(
                 input_mic=input_stream,
                 output_speaker=model_receive_stream,
-                tool_outputs=tool_executor.output_iterator(),
+                tool_outputs=tool_executor.output_iterator(send_output_chunk=send_output_chunk),
             ):
                 # First attempt JSON decoding. If unsuccessful, process as ‘raw text input’.
                 try:
