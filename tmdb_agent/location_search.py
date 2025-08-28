@@ -38,6 +38,7 @@ class MediaItem(BaseModel):
     title: str = Field(description="Official title of the work")
     # 1-2 sentence plain description (no spoilers)
     description: str = Field(description="Short description of the work")
+    reason: str = Field(description="Reason why this title was selected as one of the Top 3 globally famous works")
 
 class TopMedia(BaseModel):
     # Exactly 3 items, ordered by global notoriety (most famous first)
@@ -89,7 +90,8 @@ class LocationSearch(BaseTool):
             "selection": {
                 "videos": [{
                     "title": video.get("title"),
-                    "description": video.get("description")
+                    "description": video.get("description"),
+                    "reason": video.get("reason")
                 } for video in videos]
             },
         }
@@ -137,7 +139,7 @@ class LocationSearch(BaseTool):
              "Exclude people, characters, episodes, songs, books (unless widely known as a film/TV/anime adaptation), news articles, or venues. "
              "Return strictly the JSON that conforms to the provided schema. "
              "Order by global fame/popularity (most famous first). "
-             "Keep descriptions concise (1-2 sentences), spoiler-free, and factual."),
+             "For each item, also include a short reason explaining why the title was selected (e.g., cultural impact, awards, popularity). "),
             ("system", "Write descriptions in Japanese." if language == "ja" else "Write descriptions in English."),
             ("human",
              "Tavily's output to analyze:\n\n{input}\n\n"
@@ -170,22 +172,23 @@ class LocationSearch(BaseTool):
 
             logging.info(f"Location = {location}, Content Type = {content_type}, Language = {language}")
 
-            # 検索クエリを構築
-            search_query = self._build_search_query(location, content_type, language)
-            logging.info(f"Search Query = {search_query}")
-
 
             # --- キャッシュメタ情報生成 ---
             meta = {}
             logging.info(f"Cache meta: {meta}")
 
             # --- キャッシュ検索 ---
-            cached, hit, score = self._vectordb_cache.search_with_score(search_query, meta)
+            query = location
+            cached, hit, score = self._vectordb_cache.search_with_score(query, meta)
             if hit:
-                logging.info(f"VectorDBCache HIT (score={score:.4f})")
+                logging.info(f"VectorDBCache HIT (score={score:.4f}): for search_query:{query}")
                 return cached
             else:
-                logging.info(f"VectorDBCache MISS (score={score:.4f})")
+                logging.info(f"VectorDBCache MISS (score={score:.4f}): for search_query:{query}")
+
+            # 検索クエリを構築
+            search_query = self._build_search_query(location, content_type, language)
+            logging.info(f"Search Query = {search_query}")
 
             # Tavilyで検索実行
             search_results = await self._tavily_search.ainvoke({"query": search_query})
