@@ -957,6 +957,7 @@ dependencies = [
     { name = "langdetect" },
     { name = "pydantic" },
     { name = "sentence-transformers" },
+    { name = "sqlitedict" },
     { name = "starlette" },
     { name = "sudachidict-core" },
     { name = "sudachipy" },
@@ -976,6 +977,7 @@ requires-dist = [
     { name = "langdetect", specifier = ">=1.0.9" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "sentence-transformers", specifier = ">=5.1.0" },
+    { name = "sqlitedict", specifier = ">=2.1.0" },
     { name = "starlette", specifier = ">=0.27.0" },
     { name = "sudachidict-core", specifier = ">=20250515" },
     { name = "sudachipy", specifier = ">=0.6.10" },
@@ -2204,6 +2206,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4b/9e/9bce34f67aea0251c8ac104f7bdb2229d58fb2e86a4ad8807999c4bee34b/sqlalchemy-2.0.42-cp313-cp313-win_amd64.whl", hash = "sha256:eb9905f7f1e49fd57a7ed6269bc567fcbbdac9feadff20ad6bd7707266a91577", size = 2120473, upload-time = "2025-07-29T13:16:14.502Z" },
     { url = "https://files.pythonhosted.org/packages/ee/55/ba2546ab09a6adebc521bf3974440dc1d8c06ed342cceb30ed62a8858835/sqlalchemy-2.0.42-py3-none-any.whl", hash = "sha256:defcdff7e661f0043daa381832af65d616e060ddb54d3fe4476f51df7eaa1835", size = 1922072, upload-time = "2025-07-29T13:09:17.061Z" },
 ]
+
+[[package]]
+name = "sqlitedict"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/9a/7620d1e9dcb02839ed6d4b14064e609cdd7a8ae1e47289aa0456796dd9ca/sqlitedict-2.1.0.tar.gz", hash = "sha256:03d9cfb96d602996f1d4c2db2856f1224b96a9c431bdd16e78032a72940f9e8c", size = 21846, upload-time = "2022-12-03T13:39:13.102Z" }
 
 [[package]]
 name = "starlette"

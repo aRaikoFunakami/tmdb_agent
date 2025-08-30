@@ -1,7 +1,4 @@
-try:
-    from .vectordb_cache import VectorDBCache, param_hash
-except ImportError:
-    from vectordb_cache import VectorDBCache, param_hash
+from sqlitedict import SqliteDict
 import json
 import logging
 from typing import Type
@@ -16,8 +13,22 @@ from typing import List
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 
-# for PoC
-local_vectordb_cache = VectorDBCache()
+# シンプルなキー完全一致キャッシュ
+class SimpleSqliteCache:
+    def __init__(self, db_path="location_cache.sqlite"):
+        self.db_path = db_path
+        self.db = SqliteDict(self.db_path, autocommit=True)
+
+    def get(self, key):
+        return self.db.get(key, None)
+
+    def set(self, key, value):
+        self.db[key] = value
+
+    def close(self):
+        self.db.close()
+
+local_sqlite_cache = SimpleSqliteCache()
 
 class LocationSearchInput(BaseModel):
     location: str = Field(
@@ -57,13 +68,13 @@ class LocationSearch(BaseTool):
 
     _tavily_search: TavilySearch = PrivateAttr()
     _extract_llm: ChatOpenAI = PrivateAttr()
-    _vectordb_cache: VectorDBCache = PrivateAttr()
+    _sqlite_cache: SimpleSqliteCache = PrivateAttr()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._tavily_search = TavilySearch(max_results=10, topic="general", include_images=False, search_depth="advanced")
         self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        self._vectordb_cache = local_vectordb_cache
+        self._sqlite_cache = local_sqlite_cache
 
 
     def _detect_language(self, text: str) -> str:
@@ -158,7 +169,7 @@ class LocationSearch(BaseTool):
         return {"error": error_message}
 
     async def _arun(self, location: str, content_type: str = "multi", language: str = "auto"):
-        """Asynchronous movie/TV location content search with vector cache."""
+        """Asynchronous movie/TV location content search with sqlite cache."""
         try:
             # 自動言語検出
             if language == "auto":
@@ -172,23 +183,21 @@ class LocationSearch(BaseTool):
 
             logging.info(f"Location = {location}, Content Type = {content_type}, Language = {language}")
 
-
-            # --- キャッシュメタ情報生成 ---
-            meta = {}
-            logging.info(f"Cache meta: {meta}")
-
-            # --- キャッシュ検索 ---
-            query = location
-            cached, hit, score = self._vectordb_cache.search_with_score(query, meta)
-            if hit:
-                logging.info(f"VectorDBCache HIT (score={score:.4f}): for search_query:{query}")
-                return cached
-            else:
-                logging.info(f"VectorDBCache MISS (score={score:.4f}): for search_query:{query}")
-
             # 検索クエリを構築
             search_query = self._build_search_query(location, content_type, language)
             logging.info(f"Search Query = {search_query}")
+
+            # --- キャッシュキー生成（完全一致） ---
+            cache_key = f"{search_query}|{content_type}|{language}"
+            logging.info(f"Cache key: {cache_key}")
+
+            # --- キャッシュ検索 ---
+            cached = self._sqlite_cache.get(cache_key)
+            if cached is not None:
+                logging.info(f"SqliteCache HIT")
+                return cached
+            else:
+                logging.info(f"SqliteCache MISS")
 
             # Tavilyで検索実行
             search_results = await self._tavily_search.ainvoke({"query": search_query})
@@ -213,8 +222,7 @@ class LocationSearch(BaseTool):
             logging.info(f"Response: {response}")
 
             # --- キャッシュ保存 ---
-            self._vectordb_cache.add(search_query, meta, response)
-
+            self._sqlite_cache.set(cache_key, response)
             return response
 
         except Exception as e:

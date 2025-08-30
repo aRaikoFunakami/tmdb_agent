@@ -10,3 +10,4 @@ wheels/
 .venv
 .DS_Store
 chroma_cache
+location_cache.sqlite

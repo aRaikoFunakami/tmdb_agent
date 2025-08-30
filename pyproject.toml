@@ -20,6 +20,7 @@ dependencies = [
     "colorama>=0.4.6",
     "sentence-transformers>=5.1.0",
     "chromadb>=1.0.20",
+    "sqlitedict>=2.1.0",
 ]
 
 [project.scripts]
