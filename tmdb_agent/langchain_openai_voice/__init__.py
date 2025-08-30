@@ -198,16 +198,17 @@ class VoiceToolExecutor(BaseModel):
                 print(Fore.RED + f"   📝 Arguments: {json.dumps(args, ensure_ascii=False, indent=4)}")
                 print(Fore.RED + "   ⏰ Executing...")
             
+            # クライアントに中間応答を送信
+            intermediate_response = json.dumps(create_intermediate_response("run_tool"), ensure_ascii=False, indent=4)
+            await send_output_chunk(intermediate_response)
+
+            # ツールの呼び出し
             result = await tool.ainvoke(args)
             
             if self.verbose:
                 print(Fore.RED + f"   📊 Result Type: {type(result).__name__}")
                 # print(Fore.RED + f"   ✅ Result: {str(result)[:200]}{'...' if len(str(result)) > 200 else ''}")
                 print(Fore.RED + f"   ✅ Result: {str(result)}")
-
-            # クライアントに中間応答を送信
-            intermediate_response = json.dumps(create_intermediate_response("run_tool"), ensure_ascii=False, indent=4)
-            await send_output_chunk(intermediate_response)
             
             try:
                 result_str = json.dumps(result)
@@ -279,7 +280,6 @@ class OpenAIVoiceReactAgent(BaseModel):
     tools: list[BaseTool] | None = None
     url: str = Field(default=DEFAULT_URL)
     verbose: bool = False
-    verbose: bool = False  # ログ出力を制御するフラグ
 
     async def aconnect(
         self,
@@ -324,16 +324,6 @@ class OpenAIVoiceReactAgent(BaseModel):
                         },
                         "tools": tool_defs,
                         "voice": "sage",
-                        "input_audio_format": "pcm16",
-                        "output_audio_format": "pcm16",
-                        "turn_detection": {
-                            "type": "server_vad",
-                            "threshold": 0.5,
-                            "prefix_padding_ms": 300,
-                            "silence_duration_ms": 500
-                        },
-                        "temperature": 0.8,
-                        "max_response_output_tokens": 4096
                     },
                 }
             )
