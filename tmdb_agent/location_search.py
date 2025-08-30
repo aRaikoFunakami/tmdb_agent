@@ -46,7 +46,7 @@ class LocationSearchInput(BaseModel):
 
 class MediaItem(BaseModel):
     # Title of a well-known film/TV/series/anime
-    title: str = Field(description="Official title of the work")
+    title: str = Field(description="Official title of the work.")
     # 1-2 sentence plain description (no spoilers)
     description: str = Field(description="Short description of the work")
     reason: str = Field(description="Reason why this title was selected as one of the Top 3 globally famous works")
@@ -72,7 +72,12 @@ class LocationSearch(BaseTool):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._tavily_search = TavilySearch(max_results=10, topic="general", include_images=False, search_depth="advanced")
+        self._tavily_search = TavilySearch(
+            max_results=10, 
+            topic="general",
+            include_images=False, search_depth="advanced",
+            #include_raw_content=True  # 重要
+        )
         self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self._sqlite_cache = local_sqlite_cache
 
@@ -92,11 +97,14 @@ class LocationSearch(BaseTool):
 
         return {
             "type": "tools.location_search",
-            "description": """
-                This JSON contains items intended to be displayed in the client application
-                using components such as GroupButton. Each item includes the necessary
-                fields and instructions for proper rendering and interaction.
-            """,
+            "description": (
+                "This JSON represents the top 3 candidate works (movies, TV shows, anime) related to the specified location.\n"
+                "Each element in the 'videos' array contains:\n"
+                "- title: The official title of the work\n"
+                "- description: A concise 1-2 sentence summary (no spoilers)\n"
+                "- reason: The reason why this work was selected as a top 3 candidate (e.g., global fame, awards, clear connection to the location)\n"
+                "This information allows users to discover globally notable works associated with the location."
+            ),
             "return_direct": True,
             "selection": {
                 "videos": [{
@@ -111,19 +119,20 @@ class LocationSearch(BaseTool):
         """Build an optimized search query for location-based movie/TV content."""
         
         # 言語に応じた映画・TV番組関連キーワードマッピング
+        # _build_search_query の keywords を強化（例）
         content_keywords = {
             "movies": {
-                "ja": f"{location}にゆかりのある人気で最近の映画",
-                "en": f"famous and recent movies films cinema related to {location}",
+                "ja": f'"{location}" 映画 (舞台 OR ロケ地 OR 撮影地 OR セット) -観光 -旅行ガイド',
+                "en": f'"{location}" (film OR movie) (set in OR filmed in OR location OR setting) -tourism -travel guide',
             },
             "tv_shows": {
-                "ja": f"{location}にゆかりのある人気で最近のTV番組やドラマ",
-                "en": f"famous and recent TV shows television series drama shows related to {location}",
+                "ja": f'"{location}" (TV OR ドラマ) (舞台 OR ロケ地 OR 撮影地)',
+                "en": f'"{location}" ("tv series" OR drama) (set in OR filmed in)',
             },
             "multi": {
-                "ja": f"{location}にゆかりのある人気で最近の映画 TV番組 ドラマ アニメ",
-                "en": f"famous and recent movies TV shows content media productions related to {location}",
-            }
+                "ja": f'"{location}" (映画 OR TV OR ドラマ OR アニメ) (舞台 OR ロケ地 OR 撮影地)',
+                "en": f'"{location}" (film OR "tv series" OR anime) (set in OR filmed in)',
+            },
         }
         
         # 自動言語検出
@@ -131,35 +140,40 @@ class LocationSearch(BaseTool):
             language = self._detect_language(location)
         
         # キーワードを取得（デフォルトは英語）
-        keywords = content_keywords.get(content_type, content_keywords["multi"])
+        keywords = content_keywords.get(content_type, content_keywords["movies"]) # PoC では movies のみサポートする
         query = keywords.get(language)
         
         return query
 
 
-    def _extract_top_media(self, raw_results: list, language: str) -> dict:
+    def _extract_top_media(self, raw_results: list, language: str, location: str) -> dict:
         """Use LLM to extract Top-3 famous works (film/TV/drama/anime) as strict JSON."""
-
-        # Bind Pydantic schema to enforce strict JSON
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
-
         prompt = ChatPromptTemplate.from_messages([
             ("system",
-             "You are a precise extractor of famous audiovisual works. "
-             "From the provided web search corpus, identify only works that are FILMS, TV series, live-action dramas, or ANIME. "
-             "Exclude people, characters, episodes, songs, books (unless widely known as a film/TV/anime adaptation), news articles, or venues. "
-             "Return strictly the JSON that conforms to the provided schema. "
-             "Order by global fame/popularity (most famous first). "
-             "For each item, also include a short reason explaining why the title was selected (e.g., cultural impact, awards, popularity). "),
-            ("system", "Write descriptions in Japanese." if language == "ja" else "Write descriptions in English."),
+                "You are an extractor of audiovisual works (films, TV series, dramas, anime) that are explicitly connected to the LOCATION in the provided corpus. "
+                "Works must have clear evidence in the corpus (e.g., set in, filmed in, story takes place in). "
+                "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
+            ),
+            ("system",
+                "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
             ("human",
-             "Tavily's output to analyze:\n\n{input}\n\n"
-             "Extract exactly the Top 3 most globally famous works (films/TV/dramas/anime) present in the corpus "
-             "and return ONLY the strict JSON for the schema.")
+                "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
+                "Extract up to the Top 3 works (movies) that have explicit evidence of connection to the location. "
+                "If fewer than 3 works have evidence, return fewer. "
+                "Return ONLY the strict JSON that conforms to the schema."
+                "For the 'title' field, return ONLY the official work title (e.g., 'Oshin', 'Spirited Away'). "
+                "Do NOT include article headlines, locations, site names, or descriptive text. "
+                "Good examples: 'Oshin', 'Star Wars', 'Your Name', 'Thermae Romae'. "
+                "Bad examples: 'TV drama Oshin filming location at Ginzan Onsen snowy scenery', 'Star Wars official site', 'Your Name set in Shinkai’s hometown'. "
+                "Return strict JSON following the schema. Order primarily by location relevance, then by global fame."
+                "You MUST find official movie titles only."
+                "You MUST NOT find tv show titles, youtube content titles, and other titles."
+                "You MUST NOT include same titles."
+                "If you cannot find official movie titles, you MUST NOT return any unofficial titles or placeholders."
+            )
         ])
-
-        result = (prompt | parser_llm).invoke({"input": raw_results})
-        # Convert to plain dict for JSON serialization by _run()
+        result = (prompt | parser_llm).invoke({"input": raw_results, "location": location})
         return result.model_dump(mode="json")
 
     def _handle_error(self, error: Exception) -> dict:
@@ -200,6 +214,7 @@ class LocationSearch(BaseTool):
                 logging.info(f"SqliteCache MISS")
 
             # Tavilyで検索実行
+            logging.info("Invoking TavilySearch...")
             search_results = await self._tavily_search.ainvoke({"query": search_query})
 
             # Format: pick Tavily "results" list; handle list fallback
@@ -209,8 +224,16 @@ class LocationSearch(BaseTool):
                 raw_results = search_results
 
             # Use LLM to extract Top-3 famous works (title + description) as strict JSON
+            logging.info("Invoking LLM for extraction...")
             try:
-                videos = self._extract_top_media(raw_results, language)
+                # LLMに渡す検索結果を最大5件、かつ各要素を1000文字以内にtruncate
+                if isinstance(raw_results, list):
+                    limited_results = [
+                        (r[:1000] if isinstance(r, str) else r) for r in raw_results[:5]
+                    ]
+                else:
+                    limited_results = raw_results
+                videos = self._extract_top_media(limited_results, language, location)
             except Exception as extract_err:
                 logging.exception(f"LLM extraction failed: {extract_err}")
                 # Fallback to empty structure with correct schema (will be validated by caller if needed)
@@ -218,6 +241,7 @@ class LocationSearch(BaseTool):
 
             logging.info(f"videos: {videos}")
 
+            logging.info("Generating response...")
             response = self._generate_response(videos.get("items", []))
             logging.info(f"Response: {response}")
 
