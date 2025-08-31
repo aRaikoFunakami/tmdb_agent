@@ -14,6 +14,8 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 import random
 
+USE_PARALLEL_EXTRACTION = True  # True で並列版のコンテンツ検索を使う
+
 # シンプルなキー完全一致キャッシュ
 class SimpleSqliteCache:
     def __init__(self, db_path="location_cache.sqlite"):
@@ -234,6 +236,61 @@ class LocationSearch(BaseTool):
         result = (prompt | parser_llm).invoke({"input": raw_results, "location": location})
         return result.model_dump(mode="json")
 
+    async def _extract_top_media_parallel(self, raw_results: list, language: str, location: str) -> dict:
+        """
+        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。
+        """
+        import asyncio
+        parser_llm = self._extract_llm.with_structured_output(TopMedia)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+                "You are an extractor of audiovisual works (films, TV series, dramas, anime) that are explicitly connected to the LOCATION in the provided corpus. "
+                "Works must have clear evidence in the corpus (e.g., set in, filmed in, story takes place in). "
+                "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
+            ),
+            ("system",
+                "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
+            ("human",
+                "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
+                "Extract up to the Top 3 works (movies) that have explicit evidence of connection to the location. "
+                "If fewer than 3 works have evidence, return fewer. "
+                "Return ONLY the strict JSON that conforms to the schema."
+                "For the 'title' field, return ONLY the official work title (e.g., 'Oshin', 'Spirited Away'). "
+                "Do NOT include article headlines, locations, site names, or descriptive text. "
+                "Good examples: 'Oshin', 'Star Wars', 'Your Name', 'Thermae Romae'. "
+                "Bad examples: 'TV drama Oshin filming location at Ginzan Onsen snowy scenery', 'Star Wars official site', 'Your Name set in Shinkai’s hometown'. "
+                "Return strict JSON following the schema. Order primarily by location relevance, then by global fame."
+                "You MUST find official movie titles only."
+                "You MUST NOT find tv show titles, youtube content titles, and other titles."
+                "You MUST NOT include same titles."
+                "If you cannot find official movie titles, you MUST NOT return any unofficial titles or placeholders."
+            )
+        ])
+
+        async def extract_one(article):
+            try:
+                res = await asyncio.to_thread(
+                    lambda: (prompt | parser_llm).invoke({"input": article, "location": location})
+                )
+                return res.model_dump(mode="json")
+            except Exception as e:
+                return {"items": []}
+
+        # 並列で各記事ごとに抽出
+        tasks = [extract_one(article) for article in raw_results]
+        results = await asyncio.gather(*tasks)
+
+        # すべてのitemsを集約し、タイトル重複を除外
+        seen_titles = set()
+        merged_items = []
+        for r in results:
+            for item in r.get("items", []):
+                title = item.get("title")
+                if title and title not in seen_titles:
+                    seen_titles.add(title)
+                    merged_items.append(item)
+        return {"items": merged_items}
+
     def _handle_error(self, error: Exception) -> dict:
         """Handle errors and return a consistent error response."""
         error_message = f"Error in location content search: {str(error)}"
@@ -292,7 +349,10 @@ class LocationSearch(BaseTool):
                         ]
                     else:
                         limited_results = raw_results
-                    videos = self._extract_top_media(limited_results, language, location)
+                    if USE_PARALLEL_EXTRACTION:
+                        videos = await self._extract_top_media_parallel(limited_results, language, location)
+                    else:
+                        videos = self._extract_top_media(limited_results, language, location)
                 except Exception as extract_err:
                     logging.exception(f"LLM extraction failed: {extract_err}")
                     videos = {"items": []}
