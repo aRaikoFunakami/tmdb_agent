@@ -53,10 +53,11 @@ class MediaItem(BaseModel):
     # 1-2 sentence plain description (no spoilers)
     description: str = Field(description="Short description of the work")
     reason: str = Field(description="Reason why this title was selected as one of the top 10 globally famous works")
+    score: float = Field(description="Relevance score (0 < score <= 1): 0 is not relevant, 1 is fully relevant")
 
 class TopMedia(BaseModel):
     # Exactly 10 items, ordered by global notoriety (most famous first)
-    items: List[MediaItem] = Field(min_length=0, max_length=10, description="Top 10 by fame")
+    items: List[MediaItem] = Field(min_length=0, max_length=10, description="Top 10 by relevance")
 
 
 class LocationSearch(BaseTool):
@@ -138,7 +139,8 @@ class LocationSearch(BaseTool):
     
     def _filter_videos_by_tmdb(self, videos: list) -> list:
         """
-        動画リストに対してTMDB存在チェックを行い、タイトルの正規化で重複を除外して返す
+        動画リストに対してTMDB存在チェックを行い、タイトルの正規化で重複を除外して返す。
+        scoreも元videoから引き継ぐ。
         """
         checked_videos = []
         seen_titles = set()
@@ -151,31 +153,35 @@ class LocationSearch(BaseTool):
                 norm_title = checked["title"].strip().lower() if checked.get("title") else None
                 if norm_title and norm_title not in seen_titles:
                     seen_titles.add(norm_title)
+                    # scoreを引き継ぐ
+                    checked["score"] = video.get("score", 1.0)
                     checked_videos.append(checked)
         return checked_videos
 
     def _generate_response(self, checked_videos: list, max_result: int = 5) -> dict:
-        """
-        TMDBチェック済みリストからmax_result件サンプリングしてレスポンス生成
-        """
-        if len(checked_videos) <= max_result:
-            sampled_videos = checked_videos
+        # scoreで降順ソート
+        sorted_videos = sorted(checked_videos, key=lambda x: x.get("score", 0), reverse=True)
+        top2 = sorted_videos[:2] if len(sorted_videos) >= 2 else sorted_videos
+        rest = [s for s in sorted_videos[2:]] if len(sorted_videos) > 2 else []
+        n_random = max_result - len(top2)
+        if n_random > 0 and rest:
+            sampled_rest = random.sample(rest, min(n_random, len(rest)))
         else:
-            sampled_videos = random.sample(checked_videos, max_result)
-
+            sampled_rest = []
+        sampled = top2 + sampled_rest
         return {
             "type": "tools.location_search",
             "description": (
-                f"This JSON represents the top {len(sampled_videos)} candidate works (movies, TV shows, anime) related to the specified location.\n"
+                f"This JSON represents the top {len(sampled)} candidate works (movies, TV shows, anime) related to the specified location.\n"
                 "Each element in the 'videos' array contains:\n"
                 "- title: The official title of the work\n"
-                "- description: A concise 1-2 sentence summary (no spoilers)\n"
-                f"- reason: The reason why this work was selected as a top {len(sampled_videos)} candidate (e.g., global fame, awards, clear connection to the location)\n"
-                "This information allows users to discover globally notable works associated with the location."
+                "- description: A concise 1-2 sentence summary in English (no spoilers)\n"
+                f"- reason: The reason why this work was selected\n"
+                f"- score: Relevance score (0 < score <= 1)"
             ),
             "return_direct": True,
             "selection": {
-                "videos": sampled_videos
+                "videos": sampled
             },
         }
     
@@ -211,7 +217,7 @@ class LocationSearch(BaseTool):
 
 
     def _extract_top_media(self, raw_results: list, language: str, location: str) -> dict:
-        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON."""
+        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON, with score. Description language depends on input language."""
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -223,26 +229,46 @@ class LocationSearch(BaseTool):
                 "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
             ("human",
                 "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
-                "Extract up to the Top 10 works (movies) that have explicit evidence of connection to the location. "
+                "Extract up to the Top 10 works (movies, tv shows, anime) that have explicit evidence of connection to the location. "
                 "If fewer than 10 works have evidence, return fewer. "
                 "Return ONLY the strict JSON that conforms to the schema."
-                "For the 'title' field, return ONLY the official work title (e.g., 'Oshin', 'Spirited Away'). "
+                "For the 'title' field, return ONLY the official work title. "
                 "Do NOT include article headlines, locations, site names, or descriptive text. "
-                "Good examples: 'Oshin', 'Star Wars', 'Your Name', 'Thermae Romae'. "
-                "Bad examples: 'TV drama Oshin filming location at Ginzan Onsen snowy scenery', 'Star Wars official site', 'Your Name set in Shinkai’s hometown'. "
                 "Return strict JSON following the schema. Order primarily by location relevance, then by global fame."
-                "You MUST find official movie titles only."
-                "You MUST NOT find tv show titles, youtube content titles, and other titles."
+                "You MUST find official titles only."
                 "You MUST NOT include same titles."
-                "If you cannot find official movie titles, you MUST NOT return any unofficial titles or placeholders."
+                "If you cannot find official titles, you MUST NOT return any unofficial titles or placeholders."
+                "For the 'score' field, use the following rules:\n"
+                "- If the LOCATION is explicitly and directly mentioned in the reason or description, set score=1.0\n"
+                "- If only part of the LOCATION is matched, set score between 0.7 and 0.9\n"
+                "- If only the general area/theme is matched, set score between 0.5 and 0.7\n"
+                "- If there is little or no relation, set score between 0.0 and 0.4\n"
+                "Examples:\n"
+                "LOCATION: '渋谷'\n"
+                " - '渋谷怪談' (reason: '渋谷が舞台のホラー映画。') → score: 1.0\n"
+                " - '君の名は。' (reason: '東京が舞台の一部。') → score: 0.7\n"
+                " - 'ロスト・イン・トランスレーション' (reason: '東京の様々な場所が登場。') → score: 0.6\n"
+                "LOCATION: 'Shibuya'\n"
+                " - 'Shibuya Kaidan' (reason: 'A horror movie set in Shibuya.') → score: 1.0\n"
+                " - 'Your Name.' (reason: 'Partly set in Tokyo.') → score: 0.7\n"
+                " - 'Lost in Translation' (reason: 'Features various locations in Tokyo.') → score: 0.6\n"
             )
         ])
         result = (prompt | parser_llm).invoke({"input": raw_results, "location": location})
-        return result.model_dump(mode="json")
+        # scoreが無い場合は1.0をデフォルトで補完
+        data = result.model_dump(mode="json")
+        for item in data.get("items", []):
+            if "score" not in item or not isinstance(item["score"], (float, int)):
+                item["score"] = 1.0
+            if item["score"] > 1.0:
+                item["score"] = 1.0
+            if item["score"] < 0.0:
+                item["score"] = 0.0
+        return data
 
     async def _extract_top_media_parallel(self, raw_results: list, language: str, location: str) -> dict:
         """
-        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。
+        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。scoreもStorySearch同様に付与。descriptionの言語は入力言語に応じて切り替え。
         """
         import asyncio
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
@@ -256,18 +282,29 @@ class LocationSearch(BaseTool):
                 "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
             ("human",
                 "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
-                "Extract up to the Top 3 works (movies) that have explicit evidence of connection to the location. "
+                "Extract up to the Top 3 works (movies, tv shows, anime) that have explicit evidence of connection to the location. "
                 "If fewer than 3 works have evidence, return fewer. "
                 "Return ONLY the strict JSON that conforms to the schema."
-                "For the 'title' field, return ONLY the official work title (e.g., 'Oshin', 'Spirited Away'). "
+                "For the 'title' field, return ONLY the official work title. "
                 "Do NOT include article headlines, locations, site names, or descriptive text. "
-                "Good examples: 'Oshin', 'Star Wars', 'Your Name', 'Thermae Romae'. "
-                "Bad examples: 'TV drama Oshin filming location at Ginzan Onsen snowy scenery', 'Star Wars official site', 'Your Name set in Shinkai’s hometown'. "
                 "Return strict JSON following the schema. Order primarily by location relevance, then by global fame."
-                "You MUST find official movie titles only."
-                "You MUST NOT find tv show titles, youtube content titles, and other titles."
+                "You MUST find official titles only."
                 "You MUST NOT include same titles."
-                "If you cannot find official movie titles, you MUST NOT return any unofficial titles or placeholders."
+                "If you cannot find official titles, you MUST NOT return any unofficial titles or placeholders."
+                "For the 'score' field, use the following rules:\n"
+                "- If the LOCATION is explicitly and directly mentioned in the reason or description, set score=1.0\n"
+                "- If only part of the LOCATION is matched, set score between 0.7 and 0.9\n"
+                "- If only the general area/theme is matched, set score between 0.5 and 0.7\n"
+                "- If there is little or no relation, set score between 0.0 and 0.4\n"
+                "Examples:\n"
+                "LOCATION: '渋谷'\n"
+                " - '渋谷怪談' (reason: '渋谷が舞台のホラー映画。') → score: 1.0\n"
+                " - '君の名は。' (reason: '東京が舞台の一部。') → score: 0.7\n"
+                " - 'ロスト・イン・トランスレーション' (reason: '東京の様々な場所が登場。') → score: 0.6\n"
+                "LOCATION: 'Shibuya'\n"
+                " - 'Shibuya Kaidan' (reason: 'A horror movie set in Shibuya.') → score: 1.0\n"
+                " - 'Your Name.' (reason: 'Partly set in Tokyo.') → score: 0.7\n"
+                " - 'Lost in Translation' (reason: 'Features various locations in Tokyo.') → score: 0.6\n"
             )
         ])
 
@@ -276,8 +313,17 @@ class LocationSearch(BaseTool):
                 res = await asyncio.to_thread(
                     lambda: (prompt | parser_llm).invoke({"input": article, "location": location})
                 )
-                return res.model_dump(mode="json")
-            except Exception as e:
+                # scoreが無い場合は1.0をデフォルトで補完
+                data = res.model_dump(mode="json")
+                for item in data.get("items", []):
+                    if "score" not in item or not isinstance(item["score"], (float, int)):
+                        item["score"] = 1.0
+                    if item["score"] > 1.0:
+                        item["score"] = 1.0
+                    if item["score"] < 0.0:
+                        item["score"] = 0.0
+                return data
+            except Exception:
                 return {"items": []}
 
         # 並列で各記事ごとに抽出
