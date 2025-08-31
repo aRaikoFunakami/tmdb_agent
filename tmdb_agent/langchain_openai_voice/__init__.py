@@ -172,7 +172,7 @@ class VoiceToolExecutor(BaseModel):
         """
         if self._tool_wait_hint_audio_b64:
             wait_audio_event = {
-                "type": "response.audio.delta",
+                "type": "response.audio.please_wait_a_moment",
                 "delta": self._tool_wait_hint_audio_b64,
             }
             await send_output_chunk(json.dumps(wait_audio_event, ensure_ascii=False))
