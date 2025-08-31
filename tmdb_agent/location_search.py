@@ -92,67 +92,71 @@ class LocationSearch(BaseTool):
             return  "ja"
         except LangDetectException:
             return "en"
-
-    def _generate_response(self, videos: list) -> dict:
+        
+    def _check_tmdb_title(self, title: str, original_description: str, original_reason: str) -> dict | None:
         """
-        TMDBのmulti_searchで各タイトルの存在を確認し、
-        ・完全一致があればそのまま採用
-        ・近いタイトルがあればそちらの情報で上書きし、description/reasonも反映
-        ・全く見つからなければ除外
+        タイトルをTMDB multi searchで確認し、
+        - 完全一致があればそのまま返す
+        - 類似タイトルがあればTMDB情報でdescription/reasonも上書き
+        - 見つからなければNone
         """
         import requests
         import os
         TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+        url = "https://api.themoviedb.org/3/search/multi"
+        params = {"api_key": TMDB_API_KEY, "query": title, "language": "ja-JP"}
+        try:
+            res = requests.get(url, params=params, timeout=5)
+            res.raise_for_status()
+            data = res.json()
+            results = data.get("results", [])
+            logging.info(f"TMDB search for title: {title}, found {len(results)} results")
+        except Exception as e:
+            results = []
+        if not results:
+            logging.info(f"TMDB no match for title: {title}")
+            return None
+        # 完全一致優先
+        for r in results:
+            if (r.get("title") == title) or (r.get("name") == title) or (r.get("original_title") == title) or (r.get("original_name") == title):
+                return {
+                    "title": title,
+                    "description": original_description,
+                    "reason": original_reason
+                }
+        # 類似タイトルがあればそちらを採用し、description/reasonもtmdb情報で上書き
+        r = results[0]
+        tmdb_title = r.get("title") or r.get("name")
+        overview = r.get("overview", "")
+        return {
+            "title": tmdb_title,
+            "description": overview if overview else original_description,
+            "reason": f"Original title: {title}, Reason: {original_reason if original_reason else 'Not specified'}"
+        } 
+    
+    def _filter_videos_by_tmdb(self, videos: list) -> list:
+        """
+        動画リストに対してTMDB存在チェックを行い、採用できるものだけ返す
+        """
         checked_videos = []
         for video in videos:
             title = video.get("title")
             if not title:
                 continue
-            # TMDB multi search
-            url = "https://api.themoviedb.org/3/search/multi"
-            params = {"api_key": TMDB_API_KEY, "query": title, "language": "ja-JP"}
-            try:
-                res = requests.get(url, params=params, timeout=5)
-                res.raise_for_status()
-                data = res.json()
-                results = data.get("results", [])
-                logging.info(f"TMDB search for title: {title}, found {len(results)} results")
-            except Exception as e:
-                results = []
-            if not results:
-                logging.info(f"TMDB no match for title: {title}")
-                continue  # TMDBに全く存在しない場合は除外
+            checked = self._check_tmdb_title(title, video.get("description"), video.get("reason"))
+            if checked:
+                checked_videos.append(checked)
+        return checked_videos
 
-            # 完全一致優先
-            matched = None
-            for r in results:
-                if (r.get("title") == title) or (r.get("name") == title) or (r.get("original_title") == title) or (r.get("original_name") == title):
-                    matched = r
-                    break
-            if matched:
-                checked_videos.append({
-                    "title": title,
-                    "description": video.get("description"),
-                    "reason": video.get("reason")
-                })
-                continue
-            # 類似タイトルがあればそちらを採用し、description/reasonもtmdb情報で上書き
-            r = results[0]
-            tmdb_title = r.get("title") or r.get("name")
-            overview = r.get("overview", "")
-            # reasonには元のタイトル情報を記載
-            checked_videos.append({
-                "title": tmdb_title,
-                "description": overview if overview else video.get("description"),
-                "reason": f"Original title: {title}, Reason: {video.get('reason','Not specified')}"
-            })
-            logging.info(f"TMDB matched title: {title} -> {tmdb_title}")
-
-        # checked_videosが5件未満なら全件、5件以上ならランダムに5件返す
-        if len(checked_videos) <= 5:
+    def _generate_response(self, checked_videos: list, max_result: int = 5) -> dict:
+        """
+        TMDBチェック済みリストからmax_result件サンプリングしてレスポンス生成
+        """
+        if len(checked_videos) <= max_result:
             sampled_videos = checked_videos
         else:
-            sampled_videos = random.sample(checked_videos, 5)
+            sampled_videos = random.sample(checked_videos, max_result)
+
         return {
             "type": "tools.location_search",
             "description": (
@@ -263,45 +267,46 @@ class LocationSearch(BaseTool):
             cached = self._sqlite_cache.get(cache_key)
             if cached is not None:
                 logging.info(f"SqliteCache HIT: {cache_key}")
-                return cached
+                # キャッシュはTMDBチェック済みリストなので、そのままサンプリングのみ
+                response = self._generate_response(cached)
+                logging.info(f"Response: {response}")
+                return response
             else:
                 logging.info(f"SqliteCache MISS: {cache_key}")
+                # Tavilyで検索実行
+                logging.info("Invoking TavilySearch...")
+                search_results = await self._tavily_search.ainvoke({"query": search_query})
 
-            # Tavilyで検索実行
-            logging.info("Invoking TavilySearch...")
-            search_results = await self._tavily_search.ainvoke({"query": search_query})
-
-            # Format: pick Tavily "results" list; handle list fallback
-            if isinstance(search_results, dict):
-                raw_results = search_results.get("results", [])
-            else:
-                raw_results = search_results
-
-            # Use LLM to extract Top-5 famous works (title + description) as strict JSON
-            logging.info("Invoking LLM for extraction...")
-            try:
-                # LLMに渡す検索結果を最大5件、かつ各要素を XX 文字以内にtruncate
-                if isinstance(raw_results, list):
-                    limited_results = [
-                        (r[:750] if isinstance(r, str) else r) for r in raw_results[:15]
-                    ]
+                # Format: pick Tavily "results" list; handle list fallback
+                if isinstance(search_results, dict):
+                    raw_results = search_results.get("results", [])
                 else:
-                    limited_results = raw_results
-                videos = self._extract_top_media(limited_results, language, location)
-            except Exception as extract_err:
-                logging.exception(f"LLM extraction failed: {extract_err}")
-                # Fallback to empty structure with correct schema (will be validated by caller if needed)
-                videos = {"items": []}
+                    raw_results = search_results
 
-            logging.info(f"videos: {videos}")
+                # Use LLM to extract Top-10 famous works (title + description) as strict JSON
+                logging.info("Invoking LLM for extraction...")
+                try:
+                    if isinstance(raw_results, list):
+                        limited_results = [
+                            (r[:750] if isinstance(r, str) else r) for r in raw_results[:15]
+                        ]
+                    else:
+                        limited_results = raw_results
+                    videos = self._extract_top_media(limited_results, language, location)
+                except Exception as extract_err:
+                    logging.exception(f"LLM extraction failed: {extract_err}")
+                    videos = {"items": []}
 
-            logging.info("Generating response...")
-            response = self._generate_response(videos.get("items", []))
-            logging.info(f"Response: {response}")
+                logging.info(f"videos: {videos}")
 
-            # --- キャッシュ保存 ---
-            self._sqlite_cache.set(cache_key, response)
-            return response
+                # TMDB存在チェック済みリストをキャッシュ
+                checked_videos = self._filter_videos_by_tmdb(videos.get("items", []))
+                self._sqlite_cache.set(cache_key, checked_videos)
+
+                # checked_videos からランダムサンプリングしてレスポンス生成
+                response = self._generate_response(checked_videos)
+                logging.info(f"Response: {response}")
+                return response
 
         except Exception as e:
             return self._handle_error(e)
