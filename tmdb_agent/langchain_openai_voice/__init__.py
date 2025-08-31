@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, SecretStr, PrivateAttr
 from colorama import init, Fore, Style
 
 import os
+from .tool_wait_hint import ensure_tool_wait_hint_voice
 
 if os.getenv("OPENAI_VOICE_TEXT_MODE") is None:
     DEBUG_BY_WSCAT = False
@@ -150,11 +151,31 @@ class VoiceToolExecutor(BaseModel):
     """
     Can accept function calls and emits function call outputs to a stream.
     """
-
     tools_by_name: dict[str, BaseTool]
     verbose: bool = False
     _trigger_future: asyncio.Future = PrivateAttr(default_factory=asyncio.Future)
     _lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+    _tool_wait_hint_audio_b64: str = PrivateAttr(default=None)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # 起動時にウェイト音声をbase64で読み込む
+        try:
+            self._tool_wait_hint_audio_b64 = ensure_tool_wait_hint_voice()
+        except Exception as e:
+            print(f"[VoiceToolExecutor] tool_wait_hint音声の生成/読込に失敗: {e}")
+            self._tool_wait_hint_audio_b64 = None
+
+    async def send_tool_wait_hint_audio(self, send_output_chunk):
+        """
+        ウェイト音声を response.audio.delta 形式で送信
+        """
+        if self._tool_wait_hint_audio_b64:
+            wait_audio_event = {
+                "type": "response.audio.delta",
+                "delta": self._tool_wait_hint_audio_b64,
+            }
+            await send_output_chunk(json.dumps(wait_audio_event, ensure_ascii=False))
 
     async def _trigger_func(self) -> dict:
         """
@@ -197,19 +218,41 @@ class VoiceToolExecutor(BaseModel):
                 print(Fore.RED + f"   🔧 [Tool Call] : {tool_call['name']}")
                 print(Fore.RED + f"   📝 Arguments: {json.dumps(args, ensure_ascii=False, indent=4)}")
                 print(Fore.RED + "   ⏰ Executing...")
-            
-            # クライアントに中間応答を送信
+
+            # 2秒後にウェイト音声を送信するタスクを起動
+            wait_hint_sent = asyncio.Event()
+            async def delayed_wait_hint():
+                try:
+                    await asyncio.sleep(2)
+                    if not wait_hint_sent.is_set():
+                        await self.send_tool_wait_hint_audio(send_output_chunk)
+                except asyncio.CancelledError:
+                    pass
+
+            wait_hint_task = asyncio.create_task(delayed_wait_hint())
+
+            # テキストはいつでも返す
             intermediate_response = json.dumps(create_intermediate_response("run_tool"), ensure_ascii=False, indent=4)
             await send_output_chunk(intermediate_response)
 
             # ツールの呼び出し
             result = await tool.ainvoke(args)
-            
+
+            # ツール実行が終わったのでウェイト音声送信をキャンセル
+            wait_hint_sent.set()
+            wait_hint_task.cancel()
+            # 2秒遅延のウェイト音声送信タスクが完全に終了するまで待つ。
+            # これにより、2秒以内にツール実行が終わった場合は音声送信が確実に抑止され、
+            # タスクのリソースリークも防げる。
+            try:
+                await wait_hint_task  # キャンセル要求後、タスクの終了を待つ（CancelledErrorは握りつぶす）
+            except asyncio.CancelledError:
+                pass
+
             if self.verbose:
                 print(Fore.RED + f"   📊 Result Type: {type(result).__name__}")
-                # print(Fore.RED + f"   ✅ Result: {str(result)[:200]}{'...' if len(str(result)) > 200 else ''}")
                 print(Fore.RED + f"   ✅ Result: {str(result)}")
-            
+
             try:
                 result_str = json.dumps(result)
             except TypeError:
