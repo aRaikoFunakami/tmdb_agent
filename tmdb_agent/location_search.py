@@ -138,16 +138,20 @@ class LocationSearch(BaseTool):
     
     def _filter_videos_by_tmdb(self, videos: list) -> list:
         """
-        動画リストに対してTMDB存在チェックを行い、採用できるものだけ返す
+        動画リストに対してTMDB存在チェックを行い、タイトルの正規化で重複を除外して返す
         """
         checked_videos = []
+        seen_titles = set()
         for video in videos:
             title = video.get("title")
             if not title:
                 continue
             checked = self._check_tmdb_title(title, video.get("description"), video.get("reason"))
             if checked:
-                checked_videos.append(checked)
+                norm_title = checked["title"].strip().lower() if checked.get("title") else None
+                if norm_title and norm_title not in seen_titles:
+                    seen_titles.add(norm_title)
+                    checked_videos.append(checked)
         return checked_videos
 
     def _generate_response(self, checked_videos: list, max_result: int = 5) -> dict:
