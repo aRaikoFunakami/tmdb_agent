@@ -12,6 +12,7 @@ from langdetect.lang_detect_exception import LangDetectException
 from typing import List
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
+import random
 
 # シンプルなキー完全一致キャッシュ
 class SimpleSqliteCache:
@@ -49,11 +50,11 @@ class MediaItem(BaseModel):
     title: str = Field(description="Official title of the work.")
     # 1-2 sentence plain description (no spoilers)
     description: str = Field(description="Short description of the work")
-    reason: str = Field(description="Reason why this title was selected as one of the Top 3 globally famous works")
+    reason: str = Field(description="Reason why this title was selected as one of the top 10 globally famous works")
 
 class TopMedia(BaseModel):
-    # Exactly 3 items, ordered by global notoriety (most famous first)
-    items: List[MediaItem] = Field(min_length=3, max_length=3, description="Top 3 by fame")
+    # Exactly 10 items, ordered by global notoriety (most famous first)
+    items: List[MediaItem] = Field(min_length=0, max_length=10, description="Top 10 by fame")
 
 
 class LocationSearch(BaseTool):
@@ -73,7 +74,7 @@ class LocationSearch(BaseTool):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._tavily_search = TavilySearch(
-            max_results=10, 
+            max_results=15, 
             topic="general",
             include_images=False, search_depth="advanced",
             #include_raw_content=True  # 重要
@@ -93,25 +94,78 @@ class LocationSearch(BaseTool):
             return "en"
 
     def _generate_response(self, videos: list) -> dict:
-        """Generate a standardized response for location-based content search."""
+        """
+        TMDBのmulti_searchで各タイトルの存在を確認し、
+        ・完全一致があればそのまま採用
+        ・近いタイトルがあればそちらの情報で上書きし、description/reasonも反映
+        ・全く見つからなければ除外
+        """
+        import requests
+        import os
+        TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+        checked_videos = []
+        for video in videos:
+            title = video.get("title")
+            if not title:
+                continue
+            # TMDB multi search
+            url = "https://api.themoviedb.org/3/search/multi"
+            params = {"api_key": TMDB_API_KEY, "query": title, "language": "ja-JP"}
+            try:
+                res = requests.get(url, params=params, timeout=5)
+                res.raise_for_status()
+                data = res.json()
+                results = data.get("results", [])
+                logging.info(f"TMDB search for title: {title}, found {len(results)} results")
+            except Exception as e:
+                results = []
+            if not results:
+                logging.info(f"TMDB no match for title: {title}")
+                continue  # TMDBに全く存在しない場合は除外
 
+            # 完全一致優先
+            matched = None
+            for r in results:
+                if (r.get("title") == title) or (r.get("name") == title) or (r.get("original_title") == title) or (r.get("original_name") == title):
+                    matched = r
+                    break
+            if matched:
+                checked_videos.append({
+                    "title": title,
+                    "description": video.get("description"),
+                    "reason": video.get("reason")
+                })
+                continue
+            # 類似タイトルがあればそちらを採用し、description/reasonもtmdb情報で上書き
+            r = results[0]
+            tmdb_title = r.get("title") or r.get("name")
+            overview = r.get("overview", "")
+            # reasonには元のタイトル情報を記載
+            checked_videos.append({
+                "title": tmdb_title,
+                "description": overview if overview else video.get("description"),
+                "reason": f"Original title: {title}, Reason: {video.get('reason','Not specified')}"
+            })
+            logging.info(f"TMDB matched title: {title} -> {tmdb_title}")
+
+        # checked_videosが5件未満なら全件、5件以上ならランダムに5件返す
+        if len(checked_videos) <= 5:
+            sampled_videos = checked_videos
+        else:
+            sampled_videos = random.sample(checked_videos, 5)
         return {
             "type": "tools.location_search",
             "description": (
-                "This JSON represents the top 3 candidate works (movies, TV shows, anime) related to the specified location.\n"
+                f"This JSON represents the top {len(sampled_videos)} candidate works (movies, TV shows, anime) related to the specified location.\n"
                 "Each element in the 'videos' array contains:\n"
                 "- title: The official title of the work\n"
                 "- description: A concise 1-2 sentence summary (no spoilers)\n"
-                "- reason: The reason why this work was selected as a top 3 candidate (e.g., global fame, awards, clear connection to the location)\n"
+                f"- reason: The reason why this work was selected as a top {len(sampled_videos)} candidate (e.g., global fame, awards, clear connection to the location)\n"
                 "This information allows users to discover globally notable works associated with the location."
             ),
             "return_direct": True,
             "selection": {
-                "videos": [{
-                    "title": video.get("title"),
-                    "description": video.get("description"),
-                    "reason": video.get("reason")
-                } for video in videos]
+                "videos": sampled_videos
             },
         }
     
@@ -147,7 +201,7 @@ class LocationSearch(BaseTool):
 
 
     def _extract_top_media(self, raw_results: list, language: str, location: str) -> dict:
-        """Use LLM to extract Top-3 famous works (film/TV/drama/anime) as strict JSON."""
+        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON."""
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -159,8 +213,8 @@ class LocationSearch(BaseTool):
                 "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
             ("human",
                 "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
-                "Extract up to the Top 3 works (movies) that have explicit evidence of connection to the location. "
-                "If fewer than 3 works have evidence, return fewer. "
+                "Extract up to the Top 10 works (movies) that have explicit evidence of connection to the location. "
+                "If fewer than 10 works have evidence, return fewer. "
                 "Return ONLY the strict JSON that conforms to the schema."
                 "For the 'title' field, return ONLY the official work title (e.g., 'Oshin', 'Spirited Away'). "
                 "Do NOT include article headlines, locations, site names, or descriptive text. "
@@ -202,16 +256,16 @@ class LocationSearch(BaseTool):
             logging.info(f"Search Query = {search_query}")
 
             # --- キャッシュキー生成（完全一致） ---
-            cache_key = f"{search_query}|{content_type}|{language}"
+            cache_key = f"{search_query}"
             logging.info(f"Cache key: {cache_key}")
 
             # --- キャッシュ検索 ---
             cached = self._sqlite_cache.get(cache_key)
             if cached is not None:
-                logging.info(f"SqliteCache HIT")
+                logging.info(f"SqliteCache HIT: {cache_key}")
                 return cached
             else:
-                logging.info(f"SqliteCache MISS")
+                logging.info(f"SqliteCache MISS: {cache_key}")
 
             # Tavilyで検索実行
             logging.info("Invoking TavilySearch...")
@@ -223,13 +277,13 @@ class LocationSearch(BaseTool):
             else:
                 raw_results = search_results
 
-            # Use LLM to extract Top-3 famous works (title + description) as strict JSON
+            # Use LLM to extract Top-5 famous works (title + description) as strict JSON
             logging.info("Invoking LLM for extraction...")
             try:
-                # LLMに渡す検索結果を最大5件、かつ各要素を1000文字以内にtruncate
+                # LLMに渡す検索結果を最大5件、かつ各要素を XX 文字以内にtruncate
                 if isinstance(raw_results, list):
                     limited_results = [
-                        (r[:1000] if isinstance(r, str) else r) for r in raw_results[:5]
+                        (r[:750] if isinstance(r, str) else r) for r in raw_results[:15]
                     ]
                 else:
                     limited_results = raw_results
@@ -270,7 +324,7 @@ if __name__ == "__main__":
     tool = LocationSearch()
     print("\n--- LocationSearch PoC test ---")
     test_cases = [
-        ("草津温泉", "movies", "ja"),
+        ("パリ", "movies", "ja"),
         ("渋谷", "multi", "ja"),
         ("京都", "tv_shows", "auto"),
         ("Tokyo Tower", "movies", "en"),
