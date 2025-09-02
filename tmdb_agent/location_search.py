@@ -41,10 +41,6 @@ class LocationSearchInput(BaseModel):
         default="multi",
         description="Type of content to search for. Options: 'movies' (films set in or about the location), 'tv_shows' (TV series set in or about the location), or 'multi' (all entertainment content)."
     )
-    language: str = Field(
-        default="auto",
-        description="Language preference for search results. Use 'auto' for automatic detection, or specify language codes like 'ja', 'en', 'es', etc."
-    )
 
 
 class MediaItem(BaseModel):
@@ -74,8 +70,9 @@ class LocationSearch(BaseTool):
     _extract_llm: ChatOpenAI = PrivateAttr()
     _sqlite_cache: SimpleSqliteCache = PrivateAttr()
 
-    def __init__(self, **kwargs):
+    def __init__(self, language=None, **kwargs):
         super().__init__(**kwargs)
+        object.__setattr__(self, "language", language)
         self._tavily_search = TavilySearch(
             max_results=15, 
             topic="general",
@@ -84,17 +81,8 @@ class LocationSearch(BaseTool):
         )
         self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self._sqlite_cache = local_sqlite_cache
+        print(f"LocationSearch initialized with language: {language}")
 
-
-    def _detect_language(self, text: str) -> str:
-        """Detect language from input text."""
-        try:
-            lang = detect(text)
-            if lang in ["ja", "en"]:
-                return lang
-            return  "ja"
-        except LangDetectException:
-            return "en"
         
     def _check_tmdb_title(self, title: str, original_description: str, original_reason: str) -> dict | None:
         """
@@ -107,7 +95,7 @@ class LocationSearch(BaseTool):
         import os
         TMDB_API_KEY = os.getenv("TMDB_API_KEY")
         url = "https://api.themoviedb.org/3/search/multi"
-        params = {"api_key": TMDB_API_KEY, "query": title, "language": "ja-JP"}
+        params = {"api_key": TMDB_API_KEY, "query": title, "language": self.language if self.language in ["ja", "en"] else "en"}
         try:
             res = requests.get(url, params=params, timeout=5)
             res.raise_for_status()
@@ -185,11 +173,8 @@ class LocationSearch(BaseTool):
             },
         }
     
-    def _build_search_query(self, location: str, content_type: str, language: str) -> str:
+    def _build_search_query(self, location: str, content_type: str) -> str:
         """Build an optimized search query for location-based movie/TV content."""
-        
-        # 言語に応じた映画・TV番組関連キーワードマッピング
-        # _build_search_query の keywords を強化（例）
         content_keywords = {
             "movies": {
                 "ja": f'"{location}" 映画 (舞台 OR ロケ地 OR 撮影地 OR セット) -観光 -旅行ガイド',
@@ -204,20 +189,14 @@ class LocationSearch(BaseTool):
                 "en": f'"{location}" (film OR "tv series" OR anime) (set in OR filmed in)',
             },
         }
-        
-        # 自動言語検出
-        if language == "auto":
-            language = self._detect_language(location)
-        
-        # キーワードを取得（デフォルトは英語）
-        keywords = content_keywords.get(content_type, content_keywords["movies"]) # PoC では movies のみサポートする
-        query = keywords.get(language)
-        
+        lang = self.language if self.language in ["ja", "en"] else "en"
+        keywords = content_keywords.get(content_type, content_keywords["movies"])
+        query = keywords.get(lang)
         return query
 
 
-    def _extract_top_media(self, raw_results: list, language: str, location: str) -> dict:
-        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON, with score. Description language depends on input language."""
+    def _extract_top_media(self, raw_results: list, location: str) -> dict:
+        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON, with score. Description language depends on self.language."""
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -226,7 +205,7 @@ class LocationSearch(BaseTool):
                 "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
             ),
             ("system",
-                "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
+                "Write all descriptions in Japanese." if self.language == "ja" else "Write all descriptions in English."),
             ("human",
                 "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
                 "Extract up to the Top 10 works (movies, tv shows, anime) that have explicit evidence of connection to the location. "
@@ -266,9 +245,9 @@ class LocationSearch(BaseTool):
                 item["score"] = 0.0
         return data
 
-    async def _extract_top_media_parallel(self, raw_results: list, language: str, location: str) -> dict:
+    async def _extract_top_media_parallel(self, raw_results: list, location: str) -> dict:
         """
-        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。scoreもStorySearch同様に付与。descriptionの言語は入力言語に応じて切り替え。
+        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。scoreもStorySearch同様に付与。descriptionの言語はself.languageに応じて切り替え。
         """
         import asyncio
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
@@ -279,7 +258,7 @@ class LocationSearch(BaseTool):
                 "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
             ),
             ("system",
-                "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
+                "Write all descriptions in Japanese." if self.language == "ja" else "Write all descriptions in English."),
             ("human",
                 "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
                 "Extract up to the Top 3 works (movies, tv shows, anime) that have explicit evidence of connection to the location. "
@@ -347,23 +326,19 @@ class LocationSearch(BaseTool):
         logging.error(error_message)
         return {"error": error_message}
 
-    async def _arun(self, location: str, content_type: str = "multi", language: str = "auto"):
+    async def _arun(self, location: str, content_type: str = "multi"):
         """Asynchronous movie/TV location content search with sqlite cache."""
         try:
-            # 自動言語検出
-            if language == "auto":
-                language = self._detect_language(location)
-
             # サポートされているコンテンツタイプの検証
             supported_types = ["movies", "tv_shows", "multi"]
             if content_type not in supported_types:
                 logging.warning(f"Unsupported content type: {content_type}. Using 'multi' instead.")
                 content_type = "multi"
 
-            logging.info(f"Location = {location}, Content Type = {content_type}, Language = {language}")
+            logging.info(f"Location = {location}, Content Type = {content_type}, Language = {self.language}")
 
             # 検索クエリを構築
-            search_query = self._build_search_query(location, content_type, language)
+            search_query = self._build_search_query(location, content_type)
             logging.info(f"Search Query = {search_query}")
 
             # --- キャッシュキー生成（完全一致） ---
@@ -400,9 +375,9 @@ class LocationSearch(BaseTool):
                     else:
                         limited_results = raw_results
                     if USE_PARALLEL_EXTRACTION:
-                        videos = await self._extract_top_media_parallel(limited_results, language, location)
+                        videos = await self._extract_top_media_parallel(limited_results, location)
                     else:
-                        videos = self._extract_top_media(limited_results, language, location)
+                        videos = self._extract_top_media(limited_results, location)
                 except Exception as extract_err:
                     logging.exception(f"LLM extraction failed: {extract_err}")
                     videos = {"items": []}
@@ -421,11 +396,11 @@ class LocationSearch(BaseTool):
         except Exception as e:
             return self._handle_error(e)
 
-    def _run(self, location: str, content_type: str = "multi", language: str = "auto"):
+    def _run(self, location: str, content_type: str = "multi"):
         """Synchronous wrapper around async logic."""
         try:
             return json.dumps(
-                asyncio.run(self._arun(location, content_type, language)), 
+                asyncio.run(self._arun(location, content_type)), 
                 indent=4, 
                 ensure_ascii=False
             )
@@ -436,18 +411,17 @@ class LocationSearch(BaseTool):
 # Ensure proper module usage
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    tool = LocationSearch()
+    
     print("\n--- LocationSearch PoC test ---")
     test_cases = [
         ("パリ", "movies", "ja"),
-        ("渋谷", "multi", "ja"),
-        ("京都", "tv_shows", "auto"),
         ("Tokyo Tower", "movies", "en"),
     ]
     for location, content_type, language in test_cases:
         print(f"\n=== {content_type} | {location} | {language} ===")
         try:
-            result = tool._run(location, content_type, language)
+            tool = LocationSearch(language=language)
+            result = tool._run(location, content_type)
             print(result)
         except Exception as e:
             print(f"Error: {e}")

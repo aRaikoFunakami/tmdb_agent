@@ -46,25 +46,31 @@ connected_clients: Set[WebSocket] = set()
 
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket接続のエンドポイント"""
+    # Accept with query params
     await websocket.accept()
     connected_clients.add(websocket)
-    
+
     logger.info(f"Client {websocket.client} connected. Total clients: {len(connected_clients)}")
-    
+
     try:
-        # CineBotインスタンスを作成
-        cine_bot = create_cine_bot(verbose=True)
-        
+        # 言語パラメータ取得（例: ws://host/ws?language=ja）
+        language = websocket.query_params.get("language", "ja")
+        logger.info(f"Language param from client: {language}")
+
+        # CineBotインスタンスを作成（languageを渡す）
+        cine_bot = create_cine_bot(verbose=True, language=language)
+
         # 入力ストリームを作成
         input_queue = asyncio.Queue()
-        
+
         # 接続確認メッセージを送信
         await websocket.send_json({
             "type": "connection_established",
-            "message": "🎬 CineBotに接続しました。映画やTV番組について何でもお聞きください！",
-            "timestamp": asyncio.get_event_loop().time()
+            "message": "🎬 Connected to CineBot. Ask anything about movies or TV shows!",
+            "timestamp": asyncio.get_event_loop().time(),
+            "language": language
         })
-        
+
         # クライアントからのメッセージを受信するタスク
         async def receive_messages():
             try:
@@ -78,7 +84,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.error(f"Error receiving message: {e}")
             finally:
                 await input_queue.put(None)  # 終了シグナル
-        
+
         # 入力ストリームジェネレーター
         async def input_stream():
             while True:
@@ -86,7 +92,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if message is None:
                     break
                 yield message
-        
+
         # 出力処理
         async def send_output_chunk(chunk: str):
             try:
@@ -104,27 +110,27 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "content": chunk,
                                 "timestamp": asyncio.get_event_loop().time()
                             })
-                    
+
                     logger.debug(f"Sent chunk to {websocket.client}: {chunk[:100]}...")
                 else:
                     logger.info(f"Cannot send to {websocket.client}: connection not open")
             except Exception as e:
                 logger.error(f"Error sending chunk: {e}: {chunk}")
-        
+
         # メッセージ受信タスクを開始
         receive_task = asyncio.create_task(receive_messages())
-        
+
         # CineBotとの接続を開始
         cinebot_task = asyncio.create_task(
             cine_bot.aconnect(input_stream(), send_output_chunk)
         )
-        
+
         # どちらかのタスクが完了するまで待機
         done, pending = await asyncio.wait(
             [receive_task, cinebot_task],
             return_when=asyncio.FIRST_COMPLETED
         )
-        
+
         # 未完了のタスクをキャンセル
         for task in pending:
             task.cancel()
@@ -132,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await task
             except asyncio.CancelledError:
                 pass
-                
+
     except WebSocketDisconnect:
         logger.info(f"Client {websocket.client} disconnected")
     except Exception as e:

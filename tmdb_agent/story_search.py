@@ -35,7 +35,6 @@ local_sqlite_cache = SimpleSqliteCache()
 
 class StorySearchInput(BaseModel):
     query: str = Field(description="物語やアニメの内容に関する自然言語の質問。例: 'エルフの魔法使いがまおおうを倒してからの物語を描いたアニメは？'")
-    language: str = Field(default="auto", description="検索結果の言語。'auto'で自動検出、または 'ja', 'en' など。")
 
 class StoryItem(BaseModel):
     title: str = Field(description="作品の公式タイトル")
@@ -58,8 +57,9 @@ class StorySearch(BaseTool):
     _extract_llm: ChatOpenAI = PrivateAttr()
     _sqlite_cache: SimpleSqliteCache = PrivateAttr()
 
-    def __init__(self, **kwargs):
+    def __init__(self, language=None, **kwargs):
         super().__init__(**kwargs)
+        object.__setattr__(self, "language", language)
         self._tavily_search = TavilySearch(
             max_results=15, 
             topic="general",
@@ -68,14 +68,7 @@ class StorySearch(BaseTool):
         self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self._sqlite_cache = local_sqlite_cache
 
-    def _detect_language(self, text: str) -> str:
-        try:
-            lang = detect(text)
-            if lang in ["ja", "en"]:
-                return lang
-            return  "ja"
-        except LangDetectException:
-            return "en"
+
         
     def _check_tmdb_title(self, title: str, original_description: str, original_reason: str) -> dict | None:
         """
@@ -88,7 +81,7 @@ class StorySearch(BaseTool):
         import os
         TMDB_API_KEY = os.getenv("TMDB_API_KEY")
         url = "https://api.themoviedb.org/3/search/multi"
-        params = {"api_key": TMDB_API_KEY, "query": title, "language": "ja-JP"}
+        params = {"api_key": TMDB_API_KEY, "query": title, "language": self.language if self.language in ["ja", "en"] else "en"}
         try:
             res = requests.get(url, params=params, timeout=5)
             res.raise_for_status()
@@ -153,12 +146,12 @@ class StorySearch(BaseTool):
         return {
             "type": "tools.story_search",
             "description": (
-                f"このJSONは、指定された物語的な問いに関連する上位{len(sampled)}件の映画・テレビ番組・アニメ・物語作品候補を表します。\n"
-                "'stories'配列の各要素は:\n"
-                "- title: 公式タイトル\n"
-                "- description: 1-2文の要約（ネタバレなし）\n"
-                f"- reason: この作品が選ばれた理由\n"
-                f"- score: 適合率 (0 < score <= 1)"
+                f"This JSON represents the top {len(sampled)} candidate works (movies, TV shows, anime, stories) related to the specified narrative query.\n"
+                "Each element in the 'stories' array contains:\n"
+                "- title: Official title\n"
+                "- description: 1-2 sentence summary (no spoilers)\n"
+                f"- reason: Why this work was selected\n"
+                f"- score: Relevance (0 < score <= 1)"
             ),
             "return_direct": True,
             "selection": {
@@ -166,15 +159,13 @@ class StorySearch(BaseTool):
             },
         }
 
-    def _build_search_query(self, query: str, language: str) -> str:
-        if language == "auto":
-            language = self._detect_language(query)
-        if language == "ja":
+    def _build_search_query(self, query: str) -> str:
+        if self.language == "ja":
             return f"{query} 映画 OR TV番組 OR ドラマ OR アニメ OR 物語 OR 作品"
         else:
             return f"{query} movie OR tv show OR drama OR anime OR story OR series"
 
-    def _extract_top_stories(self, raw_results: list, language: str, query: str) -> dict:
+    def _extract_top_stories(self, raw_results: list, query: str) -> dict:
         parser_llm = self._extract_llm.with_structured_output(TopStories)
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -183,7 +174,7 @@ class StorySearch(BaseTool):
                 "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
             ),
             ("system",
-                "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
+                "Write all descriptions in Japanese." if self.language == "ja" else "Write all descriptions in English."),
             ("human",
                 "QUERY: {query}\n\nCorpus:\n{input}\n\n"
                 "Extract up to the Top 10 works (anime, story) that have explicit evidence of connection to the query. "
@@ -220,7 +211,7 @@ class StorySearch(BaseTool):
                 item["score"] = 0.0
         return data
 
-    async def _extract_top_stories_parallel(self, raw_results: list, language: str, query: str) -> dict:
+    async def _extract_top_stories_parallel(self, raw_results: list, query: str) -> dict:
         import asyncio
         parser_llm = self._extract_llm.with_structured_output(TopStories)
         prompt = ChatPromptTemplate.from_messages([
@@ -230,7 +221,7 @@ class StorySearch(BaseTool):
                 "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
             ),
             ("system",
-                "Write all descriptions in Japanese." if language == "ja" else "Write all descriptions in English."),
+                "Write all descriptions in Japanese." if self.language == "ja" else "Write all descriptions in English."),
             ("human",
                 "QUERY: {query}\n\nCorpus:\n{input}\n\n"
                 "Extract up to the Top 3 works (movie, tv show, drama, anime, story) that have explicit evidence of connection to the query. "
@@ -272,16 +263,14 @@ class StorySearch(BaseTool):
         logging.error(error_message)
         return {"error": error_message}
 
-    async def _arun(self, query: str, language: str = "auto"):
+    async def _arun(self, query: str):
         try:
-            if language == "auto":
-                language = self._detect_language(query)
-            logging.info(f"Query = {query}, Language = {language}")
+            logging.info(f"Query = {query}, Language = {self.language}")
 
             cache_key = f"{query}"
             logging.info(f"Cache key: {cache_key}")
             
-            search_query = self._build_search_query(query, language)
+            search_query = self._build_search_query(query)
             logging.info(f"Search Query = {search_query}") 
             
             cached = self._sqlite_cache.get(cache_key)
@@ -309,9 +298,9 @@ class StorySearch(BaseTool):
                     else:
                         limited_results = raw_results
                     if USE_PARALLEL_EXTRACTION:
-                        videos = await self._extract_top_stories_parallel(limited_results, language, query)
+                        videos = await self._extract_top_stories_parallel(limited_results, query)
                     else:
-                        videos = self._extract_top_stories(limited_results, language, query)
+                        videos = self._extract_top_stories(limited_results, query)
                 except Exception as extract_err:
                     logging.exception(f"LLM extraction failed: {extract_err}")
                     videos = {"items": []}
@@ -328,10 +317,10 @@ class StorySearch(BaseTool):
         except Exception as e:
             return self._handle_error(e)
 
-    def _run(self, query: str, language: str = "auto"):
+    def _run(self, query: str):
         try:
             return json.dumps(
-                asyncio.run(self._arun(query, language)), 
+                asyncio.run(self._arun(query)), 
                 indent=4, 
                 ensure_ascii=False
             )
@@ -340,17 +329,17 @@ class StorySearch(BaseTool):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    tool = StorySearch()
     print("\n--- StorySearch PoC test ---")
     test_cases = [
         ("エルフの魔法使いがまおおうを倒してからの物語を描いたアニメは？", "ja"),
         ("車でタイムスリップする話", "ja"),
-        ("ジュダイが戦う", "ja"),
+        ("ジュダイが戦う", "en"),
     ]
     for query, language in test_cases:
         print(f"\n=== {query} | {language} ===")
         try:
-            result = tool._run(query, language)
+            tool = StorySearch(language=language)
+            result = tool._run(query)
             print(result)
         except Exception as e:
             print(f"Error: {e}")

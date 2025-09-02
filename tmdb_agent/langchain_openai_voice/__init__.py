@@ -410,7 +410,7 @@ class OpenAIVoiceReactAgent(BaseModel):
 
 
                 if stream_key == "input_mic":
-                    logging.info(f"stream_key:{stream_key} data:{json.dumps(data, indent=2, ensure_ascii=False)[:100]}")
+                    # logging.info(f"stream_key:{stream_key} data:{json.dumps(data, indent=2, ensure_ascii=False)[:100]}")
                     await model_send(data)
 
                 elif stream_key == "input_text":
@@ -474,11 +474,15 @@ class OpenAIVoiceReactAgent(BaseModel):
                         await tool_executor.add_tool_call(data)
                     elif t == "response.audio_transcript.done":
                         # When Whisper (speech recognition) is completed
-                        # logging.info("model(audio transcript): %s", json.dumps(data["transcript"], indent=2, ensure_ascii=False))
+                        logging.info("model(audio transcript): %s", data["transcript"])
+                        pass
+                    elif t == "conversation.item.input_audio_transcription.delta":
+                        logging.info("user(audio transcript delta): %s", data["delta"])
                         pass
                     elif t == "conversation.item.input_audio_transcription.completed":
                         # Transcript when microphone input is completed
-                        logging.info("user(audio): %s", json.dumps(data["transcript"], indent=2, ensure_ascii=False))
+                        logging.info("user(audio transcript): %s", data["transcript"])
+                        pass
                     elif t == "response.text.done":
                         # Text response is completed, send it to the client
                         logging.info("response.text.done: %s", json.dumps(data, indent=2, ensure_ascii=False))
