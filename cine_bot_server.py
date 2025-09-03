@@ -58,7 +58,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"Language param from client: {language}")
 
         # CineBotインスタンスを作成（languageを渡す）
-        cine_bot = create_cine_bot(verbose=True, language=language)
+        cine_bot = create_cine_bot(model="gpt-realtime", verbose=True, language=language)
 
         # 入力ストリームを作成
         input_queue = asyncio.Queue()
