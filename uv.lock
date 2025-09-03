@@ -947,6 +947,7 @@ name = "media-search-agent"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "chromadb" },
     { name = "colorama" },
     { name = "langchain" },
@@ -967,6 +968,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "chromadb", specifier = ">=1.0.20" },
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "langchain", specifier = ">=0.3.27" },

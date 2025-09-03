@@ -11,9 +11,7 @@ from langchain.tools import BaseTool
 from langchain_tavily import TavilySearch
 from langchain_openai import ChatOpenAI
 
-
-USE_PARALLEL_EXTRACTION = True  # True で並列版のコンテンツ検索を使う
-
+TAVILY_MAX_RESULTS = 5
 
 class SimpleSqliteCache:
     """シンプルなキー完全一致キャッシュ"""
@@ -44,7 +42,7 @@ class BaseSearchTool(BaseTool, ABC):
         super().__init__(**kwargs)
         object.__setattr__(self, "language", language)
         self._tavily_search = TavilySearch(
-            max_results=15, 
+            max_results=TAVILY_MAX_RESULTS, 
             topic="general",
             include_images=False, 
             search_depth="advanced",
@@ -64,11 +62,6 @@ class BaseSearchTool(BaseTool, ABC):
         pass
 
     @abstractmethod
-    def _extract_content(self, raw_results: List[Any], input_data: Any) -> Dict[str, Any]:
-        """コンテンツ抽出（非並列版）"""
-        pass
-
-    @abstractmethod
     def _extract_content_parallel(self, raw_results: List[Any], input_data: Any) -> Dict[str, Any]:
         """コンテンツ抽出（並列版）"""
         pass
@@ -83,12 +76,48 @@ class BaseSearchTool(BaseTool, ABC):
         """キャッシュキーを生成"""
         pass
 
+    async def _filter_videos_by_tmdb(self, videos: list) -> list:
+        """
+        動画リストに対してTMDB存在チェックを並列で行い、タイトルの正規化で重複を除外して返す。
+        scoreも元videoから引き継ぐ。
+        （asyncio.to_threadを使用して常に非同期コンテキストで実行）
+        """
+        async def check_one_video(video):
+            title = video.get("title")
+            if not title:
+                return None
+            
+            # asyncio.to_threadを使用して同期版のTMDBチェックを並列実行
+            checked = await asyncio.to_thread(
+                self._check_tmdb_title, 
+                title, 
+                video.get("description"), 
+                video.get("reason")
+            )
+            if checked:
+                # scoreを引き継ぐ
+                checked["score"] = video.get("score", 1.0)
+                return checked
+            return None
+
+        # 並列でTMDBチェックを実行
+        tasks = [check_one_video(video) for video in videos]
+        results = await asyncio.gather(*tasks)
+
+        # 結果をフィルタリングし、重複を除外
+        checked_videos = []
+        seen_titles = set()
+        for checked in results:
+            if checked:
+                norm_title = checked["title"].strip().lower() if checked.get("title") else None
+                if norm_title and norm_title not in seen_titles:
+                    seen_titles.add(norm_title)
+                    checked_videos.append(checked)
+        return checked_videos
+
     def _check_tmdb_title(self, title: str, original_description: str, original_reason: str) -> dict | None:
         """
-        タイトルをTMDB multi searchで確認し、
-        - 完全一致があればそのまま返す
-        - 類似タイトルがあればTMDB情報でdescription/reasonも上書き
-        - 見つからなければNone
+        タイトルをTMDB multi searchで同期的に確認（純粋な同期版）
         """
         import requests
         import os
@@ -123,27 +152,6 @@ class BaseSearchTool(BaseTool, ABC):
             "description": overview if overview else original_description,
             "reason": f"Original title: {title}, Reason: {original_reason if original_reason else 'Not specified'}"
         }
-
-    def _filter_videos_by_tmdb(self, videos: list) -> list:
-        """
-        動画リストに対してTMDB存在チェックを行い、タイトルの正規化で重複を除外して返す。
-        scoreも元videoから引き継ぐ。
-        """
-        checked_videos = []
-        seen_titles = set()
-        for video in videos:
-            title = video.get("title")
-            if not title:
-                continue
-            checked = self._check_tmdb_title(title, video.get("description"), video.get("reason"))
-            if checked:
-                norm_title = checked["title"].strip().lower() if checked.get("title") else None
-                if norm_title and norm_title not in seen_titles:
-                    seen_titles.add(norm_title)
-                    # scoreを引き継ぐ
-                    checked["score"] = video.get("score", 1.0)
-                    checked_videos.append(checked)
-        return checked_videos
 
     def _generate_response(self, checked_videos: list, max_result: int = 5) -> dict:
         """共通のレスポンス生成ロジック"""
@@ -218,15 +226,12 @@ class BaseSearchTool(BaseTool, ABC):
                 try:
                     if isinstance(raw_results, list):
                         limited_results = [
-                            (r[:750] if isinstance(r, str) else r) for r in raw_results[:15]
+                            (r[:750] if isinstance(r, str) else r) for r in raw_results[:TAVILY_MAX_RESULTS]
                         ]
                     else:
                         limited_results = raw_results
                     
-                    if USE_PARALLEL_EXTRACTION:
-                        videos = await self._extract_content_parallel(limited_results, input_data)
-                    else:
-                        videos = self._extract_content(limited_results, input_data)
+                    videos = await self._extract_content_parallel(limited_results, input_data)
                 except Exception as extract_err:
                     logging.exception(f"LLM extraction failed: {extract_err}")
                     videos = {"items": []}
@@ -234,7 +239,7 @@ class BaseSearchTool(BaseTool, ABC):
                 logging.info(f"videos: {videos}")
 
                 # TMDB存在チェック済みリストをキャッシュ
-                checked_videos = self._filter_videos_by_tmdb(videos.get("items", []))
+                checked_videos = await self._filter_videos_by_tmdb(videos.get("items", []))
                 self._sqlite_cache.set(cache_key, checked_videos)
 
                 # checked_videos からランダムサンプリングしてレスポンス生成
@@ -271,9 +276,6 @@ if __name__ == "__main__":
         def _build_search_query(self, input_data) -> str:
             return f"test query: {input_data}"
         
-        def _extract_content(self, raw_results, input_data):
-            return {"items": []}
-        
         async def _extract_content_parallel(self, raw_results, input_data):
             return {"items": []}
         
@@ -283,21 +285,22 @@ if __name__ == "__main__":
         def _get_cache_key(self, input_data) -> str:
             return f"test_{input_data}"
     
-    print("Testing BaseSearchTool...")
-    
     # TMDBチェック機能のテスト
+    print("Testing BaseSearchTool...")
     tool = TestSearchTool(language="ja")
     
-    # _check_tmdb_titleのテスト（実際のAPIを呼ばずに）
-    result = tool._check_tmdb_title("Test Movie", "Test description", "Test reason")
-    print(f"TMDB check result: {result}")
-    
-    # _filter_videos_by_tmdbのテスト
+    # 並列版TMDBチェック機能のテスト
     test_videos = [
-        {"title": "Test Movie", "description": "Test desc", "reason": "Test reason", "score": 0.8}
+        {"title": "Test Movie 1", "description": "Test desc 1", "reason": "Test reason 1", "score": 0.8},
+        {"title": "Test Movie 2", "description": "Test desc 2", "reason": "Test reason 2", "score": 0.9}
     ]
-    filtered = tool._filter_videos_by_tmdb(test_videos)
-    print(f"Filtered videos: {filtered}")
+    print("Testing parallel TMDB filtering...")
+    try:
+        # 非同期関数をテストするため、asyncio.runを使用
+        filtered = asyncio.run(tool._filter_videos_by_tmdb(test_videos))
+        print(f"Parallel filtered videos: {len(filtered)} results")
+    except Exception as e:
+        print(f"Parallel filtering test failed (expected without TMDB_API_KEY): {e}")
     
     # _generate_responseのテスト
     response = tool._generate_response([

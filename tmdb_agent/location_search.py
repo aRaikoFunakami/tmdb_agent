@@ -82,58 +82,6 @@ class LocationSearch(BaseSearchTool):
     def _get_response_type(self) -> str:
         return "tools.location_search"
 
-    def _extract_content(self, raw_results: list, input_data) -> dict:
-        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON, with score."""
-        location = input_data.get("location", "")
-        
-        parser_llm = self._extract_llm.with_structured_output(TopMedia)
-        prompt = ChatPromptTemplate.from_messages([
-            ("system",
-                "You are an extractor of audiovisual works (films, TV series, dramas, anime) that are explicitly connected to the LOCATION in the provided corpus. "
-                "Works must have clear evidence in the corpus (e.g., set in, filmed in, story takes place in). "
-                "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
-            ),
-            ("system",
-                "Write all descriptions in Japanese." if self.language == "ja" else "Write all descriptions in English."),
-            ("human",
-                "LOCATION: {location}\n\nCorpus:\n{input}\n\n"
-                "Extract up to the Top 10 works (movies, tv shows, anime) that have explicit evidence of connection to the location. "
-                "If fewer than 10 works have evidence, return fewer. "
-                "Return ONLY the strict JSON that conforms to the schema."
-                "For the 'title' field, return ONLY the official work title. "
-                "Do NOT include article headlines, locations, site names, or descriptive text. "
-                "Return strict JSON following the schema. Order primarily by location relevance, then by global fame."
-                "You MUST find official titles only."
-                "You MUST NOT include same titles."
-                "If you cannot find official titles, you MUST NOT return any unofficial titles or placeholders."
-                "For the 'score' field, use the following rules:\n"
-                "- If the LOCATION is explicitly and directly mentioned in the reason or description, set score=1.0\n"
-                "- If only part of the LOCATION is matched, set score between 0.7 and 0.9\n"
-                "- If only the general area/theme is matched, set score between 0.5 and 0.7\n"
-                "- If there is little or no relation, set score between 0.0 and 0.4\n"
-                "Examples:\n"
-                "LOCATION: '渋谷'\n"
-                " - '渋谷怪談' (reason: '渋谷が舞台のホラー映画。') → score: 1.0\n"
-                " - '君の名は。' (reason: '東京が舞台の一部。') → score: 0.7\n"
-                " - 'ロスト・イン・トランスレーション' (reason: '東京の様々な場所が登場。') → score: 0.6\n"
-                "LOCATION: 'Shibuya'\n"
-                " - 'Shibuya Kaidan' (reason: 'A horror movie set in Shibuya.') → score: 1.0\n"
-                " - 'Your Name.' (reason: 'Partly set in Tokyo.') → score: 0.7\n"
-                " - 'Lost in Translation' (reason: 'Features various locations in Tokyo.') → score: 0.6\n"
-            )
-        ])
-        result = (prompt | parser_llm).invoke({"input": raw_results, "location": location})
-        # scoreが無い場合は1.0をデフォルトで補完
-        data = result.model_dump(mode="json")
-        for item in data.get("items", []):
-            if "score" not in item or not isinstance(item["score"], (float, int)):
-                item["score"] = 1.0
-            if item["score"] > 1.0:
-                item["score"] = 1.0
-            if item["score"] < 0.0:
-                item["score"] = 0.0
-        return data
-
     async def _extract_content_parallel(self, raw_results: list, input_data) -> dict:
         """
         各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。
@@ -218,7 +166,17 @@ class LocationSearch(BaseSearchTool):
 
 # LocationSearch単体テスト
 if __name__ == "__main__":
+    import sys
+    import os
     import logging
+    
+    # プロジェクトのルートディレクトリをPythonパスに追加
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    sys.path.insert(0, project_root)
+    
+    # 絶対インポートを使用
+    from tmdb_agent.location_search import LocationSearch
     
     logging.basicConfig(level=logging.INFO)
     

@@ -49,55 +49,6 @@ class StorySearch(BaseSearchTool):
     def _get_response_type(self) -> str:
         return "tools.story_search"
 
-    def _extract_content(self, raw_results: list, input_data) -> dict:
-        """Use LLM to extract Top-10 story works as strict JSON, with score."""
-        query = input_data.get("query", "")
-        
-        parser_llm = self._extract_llm.with_structured_output(TopStories)
-        prompt = ChatPromptTemplate.from_messages([
-            ("system",
-                "You are an extractor of anime and story works that are explicitly related to the QUERY in the provided corpus. "
-                "Works must have clear evidence in the corpus (e.g., plot, character, setting). "
-                "Do NOT rely on prior knowledge. Skip any title without explicit evidence. "
-            ),
-            ("system",
-                "Write all descriptions in Japanese." if self.language == "ja" else "Write all descriptions in English."),
-            ("human",
-                "QUERY: {query}\n\nCorpus:\n{input}\n\n"
-                "Extract up to the Top 10 works (anime, story) that have explicit evidence of connection to the query. "
-                "If fewer than 10 works have evidence, return fewer. "
-                "Return ONLY the strict JSON that conforms to the schema."
-                "For the 'title' field, return ONLY the official work title. "
-                "Do NOT include article headlines, locations, site names, or descriptive text. "
-                "Return strict JSON following the schema. Order primarily by query relevance, then by fame."
-                "You MUST find official anime or story titles only."
-                "You MUST NOT include same titles."
-                "If you cannot find official titles, you MUST NOT return any unofficial titles or placeholders."
-                "For the 'score' field, use the following rules:\n"
-                "- If the QUERY's main keywords (nouns/verbs) are explicitly and directly mentioned in the reason or description, set score=1.0\n"
-                "- If only part of the QUERY is matched, set score between 0.7 and 0.9\n"
-                "- If only the general theme is matched (e.g., just 'time travel'), set score between 0.5 and 0.7\n"
-                "- If there is little or no relation, set score between 0.0 and 0.4\n"
-                "Examples:\n"
-                "QUERY: '車でタイムスリップする話'\n"
-                " - 'バック・トゥ・ザ・フューチャー' (reason: '車でタイムスリップする話に明確に関連しているため。') → score: 1.0\n"
-                " - '時をかける少女' (reason: '女子高生がタイムスリップする物語。') → score: 0.7\n"
-                " - 'バブルへGO!!' (reason: 'タイムスリップの要素が明確に描かれているため。') → score: 0.6\n"
-            )
-        ])
-        result = (prompt | parser_llm).invoke({"input": raw_results, "query": query})
-        # scoreが無い場合は1.0をデフォルトで補完
-        data = result.model_dump(mode="json")
-        for item in data.get("items", []):
-            if "score" not in item or not isinstance(item["score"], (float, int)):
-                item["score"] = 1.0
-            # scoreが範囲外なら補正
-            if item["score"] > 1.0:
-                item["score"] = 1.0
-            if item["score"] < 0.0:
-                item["score"] = 0.0
-        return data
-
     async def _extract_content_parallel(self, raw_results: list, input_data) -> dict:
         """
         各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。
