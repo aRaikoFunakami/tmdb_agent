@@ -73,7 +73,7 @@ class CineBot:
     
     def __init__(
         self,
-        model: str = "gpt-realtime",
+        model: str = "gpt-4o-mini-realtime-preview",
         api_key: Optional[str] = None,
         instructions: Optional[str] = None,
         verbose: bool = True,
@@ -107,7 +107,8 @@ class CineBot:
             api_key=api_key,
             instructions=instructions,
             tools=self.tools,
-            verbose=verbose
+            verbose=verbose,
+            language=language or "ja"
         )
     
     def _create_default_instructions(self) -> str:
@@ -264,7 +265,22 @@ def create_cine_bot(
 async def test_cine_bot():
     """CineBotのテスト用関数"""
     print("CineBot Test Starting...")
-    
+
+    # create_cine_botのテスト
+    print("\n--- Testing: create_cine_bot (ja) ---")
+    bot_ja = create_cine_bot(language="ja")
+
+    print(f"CineBot (ja) agent.language: {getattr(bot_ja.agent, 'language', None)}")
+    print(f"CineBot (ja) supported languages: {bot_ja.get_supported_languages()}")
+    print(f"CineBot (ja) available tools: {bot_ja.get_available_tools()}")
+
+    print("\n--- Testing: create_cine_bot (en) ---")
+    bot_en = create_cine_bot(language="en")
+
+    print(f"CineBot (en) agent.language: {getattr(bot_en.agent, 'language', None)}")
+    print(f"CineBot (en) supported languages: {bot_en.get_supported_languages()}")
+    print(f"CineBot (en) available tools: {bot_en.get_available_tools()}")
+
     # テストデータ
     test_queries = [
         "80年代で面白い映画ある？",
@@ -272,7 +288,7 @@ async def test_cine_bot():
         "ナウシカ好きなんだけど、おすすめの映画ある？",
         "最新のトレンド映画教えて",
     ]
-    
+
     # 各クエリでTMDBツールを直接テスト
     for query in test_queries:
         print(f"\n--- Testing: {query} ---")
@@ -286,11 +302,10 @@ async def test_cine_bot():
                 result = tmdb_movie_search.invoke({"query": "風の谷のナウシカ", "language_code": "ja-JP"})
             else:
                 result = tmdb_trending_movies.invoke({})
-            
             print(f"Result: {result}")
         except Exception as e:
             print(f"Error: {e}")
-    
+
     print("\nCineBot Test Completed!")
 
 

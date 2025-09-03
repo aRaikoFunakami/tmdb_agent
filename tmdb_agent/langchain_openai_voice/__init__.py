@@ -153,15 +153,16 @@ class VoiceToolExecutor(BaseModel):
     """
     tools_by_name: dict[str, BaseTool]
     verbose: bool = False
+    language: str = "ja"
     _trigger_future: asyncio.Future = PrivateAttr(default_factory=asyncio.Future)
     _lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
     _tool_wait_hint_audio_b64: str = PrivateAttr(default=None)
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, language: str = "ja", **kwargs):
+        super().__init__(language=language, **kwargs)
         # 起動時にウェイト音声をbase64で読み込む
         try:
-            self._tool_wait_hint_audio_b64 = ensure_tool_wait_hint_voice()
+            self._tool_wait_hint_audio_b64 = ensure_tool_wait_hint_voice(language)
         except Exception as e:
             print(f"[VoiceToolExecutor] tool_wait_hint音声の生成/読込に失敗: {e}")
             self._tool_wait_hint_audio_b64 = None
@@ -324,6 +325,10 @@ class OpenAIVoiceReactAgent(BaseModel):
     url: str = Field(default=DEFAULT_URL)
     verbose: bool = False
 
+    language: str = "ja"
+
+    # PydanticのBaseModelなので__init__はカスタムしない（languageはフィールド定義のみでOK）
+
     async def aconnect(
         self,
         input_stream: AsyncIterator[str],
@@ -336,10 +341,9 @@ class OpenAIVoiceReactAgent(BaseModel):
             Stream of input events to send to the model. Usually transports input_audio_buffer.append events from the microphone.
         output: Callable[[str], None]
             Callback to receive output events from the model. Usually sends response.audio.delta events to the speaker.
-
         """
         tools_by_name = {tool.name: tool for tool in self.tools or []}
-        tool_executor = VoiceToolExecutor(tools_by_name=tools_by_name, verbose=self.verbose)
+        tool_executor = VoiceToolExecutor(tools_by_name=tools_by_name, verbose=self.verbose, language=self.language)
 
         async with connect(
             model=self.model, api_key=self.api_key.get_secret_value(), url=self.url
