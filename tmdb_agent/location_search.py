@@ -1,37 +1,13 @@
-from sqlitedict import SqliteDict
-import json
-import logging
 from typing import Type
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field
 import asyncio
+import logging
 
-from langchain.tools import BaseTool
-from langchain_tavily import TavilySearch
-from langdetect import detect
-from langdetect.lang_detect_exception import LangDetectException
-from typing import List
-from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-import random
+from typing import List
 
-USE_PARALLEL_EXTRACTION = True  # True で並列版のコンテンツ検索を使う
+from .base_search import BaseSearchTool
 
-# シンプルなキー完全一致キャッシュ
-class SimpleSqliteCache:
-    def __init__(self, db_path="location_cache.sqlite"):
-        self.db_path = db_path
-        self.db = SqliteDict(self.db_path, autocommit=True)
-
-    def get(self, key):
-        return self.db.get(key, None)
-
-    def set(self, key, value):
-        self.db[key] = value
-
-    def close(self):
-        self.db.close()
-
-local_sqlite_cache = SimpleSqliteCache()
 
 class LocationSearchInput(BaseModel):
     location: str = Field(
@@ -51,12 +27,13 @@ class MediaItem(BaseModel):
     reason: str = Field(description="Reason why this title was selected as one of the top 10 globally famous works")
     score: float = Field(description="Relevance score (0 < score <= 1): 0 is not relevant, 1 is fully relevant")
 
+
 class TopMedia(BaseModel):
     # Exactly 10 items, ordered by global notoriety (most famous first)
     items: List[MediaItem] = Field(min_length=0, max_length=10, description="Top 10 by relevance")
 
 
-class LocationSearch(BaseTool):
+class LocationSearch(BaseSearchTool):
     name: str = "search_location_content"
     description: str = (
         "Function to search for movie and TV show content based on location, POI, or address. "
@@ -64,117 +41,21 @@ class LocationSearch(BaseTool):
         "Returns detailed information about movies, TV shows, and entertainment venues associated with the specified location."
     )
     args_schema: Type[BaseModel] = LocationSearchInput
-    return_direct: bool = True
 
-    _tavily_search: TavilySearch = PrivateAttr()
-    _extract_llm: ChatOpenAI = PrivateAttr()
-    _sqlite_cache: SimpleSqliteCache = PrivateAttr()
+    def _get_cache_file_name(self) -> str:
+        return "location_cache.sqlite"
 
-    def __init__(self, language=None, **kwargs):
-        super().__init__(**kwargs)
-        object.__setattr__(self, "language", language)
-        self._tavily_search = TavilySearch(
-            max_results=15, 
-            topic="general",
-            include_images=False, search_depth="advanced",
-            #include_raw_content=True  # 重要
-        )
-        self._extract_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        self._sqlite_cache = local_sqlite_cache
-        print(f"LocationSearch initialized with language: {language}")
-
-        
-    def _check_tmdb_title(self, title: str, original_description: str, original_reason: str) -> dict | None:
-        """
-        タイトルをTMDB multi searchで確認し、
-        - 完全一致があればそのまま返す
-        - 類似タイトルがあればTMDB情報でdescription/reasonも上書き
-        - 見つからなければNone
-        """
-        import requests
-        import os
-        TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-        url = "https://api.themoviedb.org/3/search/multi"
-        params = {"api_key": TMDB_API_KEY, "query": title, "language": self.language if self.language in ["ja", "en"] else "en"}
-        try:
-            res = requests.get(url, params=params, timeout=5)
-            res.raise_for_status()
-            data = res.json()
-            results = data.get("results", [])
-            logging.info(f"TMDB search for title: {title}, found {len(results)} results")
-        except Exception as e:
-            results = []
-        if not results:
-            logging.info(f"TMDB no match for title: {title}")
-            return None
-        # 完全一致優先
-        for r in results:
-            if (r.get("title") == title) or (r.get("name") == title) or (r.get("original_title") == title) or (r.get("original_name") == title):
-                return {
-                    "title": title,
-                    "description": original_description,
-                    "reason": original_reason
-                }
-        # 類似タイトルがあればそちらを採用し、description/reasonもtmdb情報で上書き
-        r = results[0]
-        tmdb_title = r.get("title") or r.get("name")
-        overview = r.get("overview", "")
-        return {
-            "title": tmdb_title,
-            "description": overview if overview else original_description,
-            "reason": f"Original title: {title}, Reason: {original_reason if original_reason else 'Not specified'}"
-        } 
-    
-    def _filter_videos_by_tmdb(self, videos: list) -> list:
-        """
-        動画リストに対してTMDB存在チェックを行い、タイトルの正規化で重複を除外して返す。
-        scoreも元videoから引き継ぐ。
-        """
-        checked_videos = []
-        seen_titles = set()
-        for video in videos:
-            title = video.get("title")
-            if not title:
-                continue
-            checked = self._check_tmdb_title(title, video.get("description"), video.get("reason"))
-            if checked:
-                norm_title = checked["title"].strip().lower() if checked.get("title") else None
-                if norm_title and norm_title not in seen_titles:
-                    seen_titles.add(norm_title)
-                    # scoreを引き継ぐ
-                    checked["score"] = video.get("score", 1.0)
-                    checked_videos.append(checked)
-        return checked_videos
-
-    def _generate_response(self, checked_videos: list, max_result: int = 5) -> dict:
-        # scoreで降順ソート
-        sorted_videos = sorted(checked_videos, key=lambda x: x.get("score", 0), reverse=True)
-        top2 = sorted_videos[:2] if len(sorted_videos) >= 2 else sorted_videos
-        rest = [s for s in sorted_videos[2:]] if len(sorted_videos) > 2 else []
-        n_random = max_result - len(top2)
-        if n_random > 0 and rest:
-            sampled_rest = random.sample(rest, min(n_random, len(rest)))
-        else:
-            sampled_rest = []
-        sampled = top2 + sampled_rest
-        return {
-            "type": "tools.location_search",
-            "description": (
-                f"This JSON represents the top {len(sampled)} candidate works (movies, TV shows, anime) related to the specified location.\n"
-                "Each element in the 'videos' array contains:\n"
-                "- title: The official title of the work\n"
-                "- description: A concise 1-2 sentence summary in English (no spoilers)\n"
-                f"- reason: The reason why this work was selected\n"
-                f"- score: Relevance score (0 < score <= 1)"
-            ),
-            "return_direct": True,
-            "selection": {
-                "videos": sampled
-            },
-        }
-    
-    def _build_search_query(self, location: str, content_type: str) -> str:
+    def _build_search_query(self, input_data) -> str:
         """Build an optimized search query for location-based movie/TV content."""
+        location = input_data.get("location", "")
+        content_type = input_data.get("content_type", "multi")
+        
+        # サポートされているコンテンツタイプの検証
+        supported_types = ["movies", "tv_shows", "multi"]
+        if content_type not in supported_types:
+            logging.warning(f"Unsupported content type: {content_type}. Using 'multi' instead.")
+            content_type = "multi"
+        
         content_keywords = {
             "movies": {
                 "ja": f'"{location}" 映画 (舞台 OR ロケ地 OR 撮影地 OR セット) -観光 -旅行ガイド',
@@ -194,9 +75,17 @@ class LocationSearch(BaseTool):
         query = keywords.get(lang)
         return query
 
+    def _get_cache_key(self, input_data) -> str:
+        """キャッシュキーを生成"""
+        return self._build_search_query(input_data)
 
-    def _extract_top_media(self, raw_results: list, location: str) -> dict:
-        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON, with score. Description language depends on self.language."""
+    def _get_response_type(self) -> str:
+        return "tools.location_search"
+
+    def _extract_content(self, raw_results: list, input_data) -> dict:
+        """Use LLM to extract Top-10 famous works (film/TV/drama/anime) as strict JSON, with score."""
+        location = input_data.get("location", "")
+        
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -245,11 +134,12 @@ class LocationSearch(BaseTool):
                 item["score"] = 0.0
         return data
 
-    async def _extract_top_media_parallel(self, raw_results: list, location: str) -> dict:
+    async def _extract_content_parallel(self, raw_results: list, input_data) -> dict:
         """
-        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。scoreもStorySearch同様に付与。descriptionの言語はself.languageに応じて切り替え。
+        各記事ごとにtop3作品を並列で抽出し、重複タイトルを除外して結合する。
         """
-        import asyncio
+        location = input_data.get("location", "")
+        
         parser_llm = self._extract_llm.with_structured_output(TopMedia)
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -320,96 +210,16 @@ class LocationSearch(BaseTool):
                     merged_items.append(item)
         return {"items": merged_items}
 
-    def _handle_error(self, error: Exception) -> dict:
-        """Handle errors and return a consistent error response."""
-        error_message = f"Error in location content search: {str(error)}"
-        logging.error(error_message)
-        return {"error": error_message}
-
     async def _arun(self, location: str, content_type: str = "multi"):
         """Asynchronous movie/TV location content search with sqlite cache."""
-        try:
-            # サポートされているコンテンツタイプの検証
-            supported_types = ["movies", "tv_shows", "multi"]
-            if content_type not in supported_types:
-                logging.warning(f"Unsupported content type: {content_type}. Using 'multi' instead.")
-                content_type = "multi"
-
-            logging.info(f"Location = {location}, Content Type = {content_type}, Language = {self.language}")
-
-            # 検索クエリを構築
-            search_query = self._build_search_query(location, content_type)
-            logging.info(f"Search Query = {search_query}")
-
-            # --- キャッシュキー生成（完全一致） ---
-            cache_key = f"{search_query}"
-            logging.info(f"Cache key: {cache_key}")
-
-            # --- キャッシュ検索 ---
-            cached = self._sqlite_cache.get(cache_key)
-            if cached is not None:
-                logging.info(f"SqliteCache HIT: {cache_key}")
-                # キャッシュはTMDBチェック済みリストなので、そのままサンプリングのみ
-                response = self._generate_response(cached)
-                logging.info(f"Response: {response}")
-                return response
-            else:
-                logging.info(f"SqliteCache MISS: {cache_key}")
-                # Tavilyで検索実行
-                logging.info("Invoking TavilySearch...")
-                search_results = await self._tavily_search.ainvoke({"query": search_query})
-
-                # Format: pick Tavily "results" list; handle list fallback
-                if isinstance(search_results, dict):
-                    raw_results = search_results.get("results", [])
-                else:
-                    raw_results = search_results
-
-                # Use LLM to extract Top-10 famous works (title + description) as strict JSON
-                logging.info("Invoking LLM for extraction...")
-                try:
-                    if isinstance(raw_results, list):
-                        limited_results = [
-                            (r[:750] if isinstance(r, str) else r) for r in raw_results[:15]
-                        ]
-                    else:
-                        limited_results = raw_results
-                    if USE_PARALLEL_EXTRACTION:
-                        videos = await self._extract_top_media_parallel(limited_results, location)
-                    else:
-                        videos = self._extract_top_media(limited_results, location)
-                except Exception as extract_err:
-                    logging.exception(f"LLM extraction failed: {extract_err}")
-                    videos = {"items": []}
-
-                logging.info(f"videos: {videos}")
-
-                # TMDB存在チェック済みリストをキャッシュ
-                checked_videos = self._filter_videos_by_tmdb(videos.get("items", []))
-                self._sqlite_cache.set(cache_key, checked_videos)
-
-                # checked_videos からランダムサンプリングしてレスポンス生成
-                response = self._generate_response(checked_videos)
-                logging.info(f"Response: {response}")
-                return response
-
-        except Exception as e:
-            return self._handle_error(e)
-
-    def _run(self, location: str, content_type: str = "multi"):
-        """Synchronous wrapper around async logic."""
-        try:
-            return json.dumps(
-                asyncio.run(self._arun(location, content_type)), 
-                indent=4, 
-                ensure_ascii=False
-            )
-        except Exception as e:
-            return json.dumps(self._handle_error(e), indent=4, ensure_ascii=False)
+        input_data = {"location": location, "content_type": content_type}
+        return await self._arun_common(input_data)
 
 
-# Ensure proper module usage
+# LocationSearch単体テスト
 if __name__ == "__main__":
+    import logging
+    
     logging.basicConfig(level=logging.INFO)
     
     print("\n--- LocationSearch PoC test ---")
@@ -421,7 +231,8 @@ if __name__ == "__main__":
         print(f"\n=== {content_type} | {location} | {language} ===")
         try:
             tool = LocationSearch(language=language)
-            result = tool._run(location, content_type)
-            print(result)
+            result = tool._run(location=location, content_type=content_type)
+            print("Result type:", type(result))
+            print("Result preview:", result[:200] + "..." if len(result) > 200 else result)
         except Exception as e:
             print(f"Error: {e}")
