@@ -6,14 +6,14 @@ import requests
 # 言語ごとのテキスト・voice・ファイル名設定
 VOICE_HINT_CONFIG = {
     "ja": {
-        "text": "少々お待ちください",
+        "text": " 調査をしています。少々お待ちください",
         "voice": "sage",
         "filename": "_tool_wait_hint_sage.wav",
     },
     "en": {
-        "text": "Please wait a moment.",
-        "voice": "alloy",
-        "filename": "_tool_wait_hint_alloy_en.wav",
+        "text": " I’m looking this up for you, just a moment!",
+        "voice": "sage",
+        "filename": "_tool_wait_hint_sage_en.wav",
     },
 }
 
@@ -38,7 +38,7 @@ def ensure_tool_wait_hint_voice(language: str = "ja"):
             "input": config["text"],
             "voice": config["voice"],
             "response_format": "wav",
-            "speed": 1.2,
+            "speed": 1.0,
         }
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()

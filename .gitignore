@@ -13,3 +13,4 @@ chroma_cache
 location_cache.sqlite
 tmdb_agent/langchain_openai_voice/_tool_wait_hint_sage.wav
 story_cache.sqlite
+tmdb_agent/langchain_openai_voice/_tool_wait_hint_sage_en.wav
